@@ -349,23 +349,63 @@ function Invoke-CdpExpression {
             $message = $received.ToString() | ConvertFrom-Json
             [void]$received.Clear()
 
-            if ($message.id -ne 1) {
+            $idProperty = $message.PSObject.Properties['id']
+            if ($null -eq $idProperty -or [int]$idProperty.Value -ne 1) {
                 continue
             }
 
-            if ($null -ne $message.error) {
-                throw "CDP error: $($message.error.message)"
+            $errorProperty = $message.PSObject.Properties['error']
+            if ($null -ne $errorProperty -and $null -ne $errorProperty.Value) {
+                $errorMessageProperty = $errorProperty.Value.PSObject.Properties['message']
+                $errorMessage = if ($null -ne $errorMessageProperty) {
+                    [string]$errorMessageProperty.Value
+                }
+                else {
+                    'Unknown DevTools error'
+                }
+                throw "CDP error: $errorMessage"
             }
 
-            if ($null -ne $message.result.exceptionDetails) {
-                $description = $message.result.exceptionDetails.exception.description
-                if ([string]::IsNullOrWhiteSpace($description)) {
-                    $description = $message.result.exceptionDetails.text
+            $resultProperty = $message.PSObject.Properties['result']
+            if ($null -eq $resultProperty -or $null -eq $resultProperty.Value) {
+                throw 'The DevTools response did not contain a result.'
+            }
+
+            $resultObject = $resultProperty.Value
+            $exceptionProperty = $resultObject.PSObject.Properties['exceptionDetails']
+            if ($null -ne $exceptionProperty -and $null -ne $exceptionProperty.Value) {
+                $exceptionDetails = $exceptionProperty.Value
+                $descriptionProperty = $exceptionDetails.PSObject.Properties['text']
+                $description = if (
+                    $null -ne $descriptionProperty -and
+                    -not [string]::IsNullOrWhiteSpace([string]$descriptionProperty.Value)
+                ) {
+                    [string]$descriptionProperty.Value
+                }
+                else {
+                    'Unknown page error'
+                }
+                $exceptionObjectProperty = $exceptionDetails.PSObject.Properties['exception']
+                if ($null -ne $exceptionObjectProperty -and $null -ne $exceptionObjectProperty.Value) {
+                    $descriptionProperty = $exceptionObjectProperty.Value.PSObject.Properties['description']
+                    if ($null -ne $descriptionProperty -and -not [string]::IsNullOrWhiteSpace([string]$descriptionProperty.Value)) {
+                        $description = [string]$descriptionProperty.Value
+                    }
                 }
                 throw "Page script failed: $description"
             }
 
-            return $message.result.result.value
+            $valueContainerProperty = $resultObject.PSObject.Properties['result']
+            if ($null -eq $valueContainerProperty -or $null -eq $valueContainerProperty.Value) {
+                throw 'The DevTools result did not contain a value.'
+            }
+
+            $valueProperty = $valueContainerProperty.Value.PSObject.Properties['value']
+            if ($null -eq $valueProperty) {
+                throw 'The DevTools result did not contain a value field.'
+            }
+
+            return $valueProperty.Value
         }
     }
     finally {
