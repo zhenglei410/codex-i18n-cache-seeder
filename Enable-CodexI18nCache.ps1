@@ -432,8 +432,18 @@ $patchExpression = @'
     const prefix = "statsig.cached.evaluations.";
     const targetLayer = "72216192";
     const targetLayerHash = "4269166702";
-    const waitUntil = Date.now() + 15000;
+    const waitUntil = Date.now() + 45000;
 
+    const getStatsigClient = () => {
+        const root = window.__STATSIG__ || globalThis.__STATSIG__;
+        if (!root) {
+            return null;
+        }
+        return root.firstInstance ||
+            (typeof root.instance === "function" ? root.instance() : null);
+    };
+
+    let seededFromMemory = false;
     const cacheKeys = () => {
         const keys = [];
         for (let index = 0; index < localStorage.length; index += 1) {
@@ -442,6 +452,26 @@ $patchExpression = @'
                 keys.push(key);
             }
         }
+
+        if (keys.length === 0) {
+            try {
+                const client = getStatsigClient();
+                if (client && client.dataAdapter) {
+                    const user = client.getContext().user;
+                    const cacheKey = client.dataAdapter._getCacheKey(user);
+                    const currentData = client.dataAdapter.getDataSync(user);
+                    if (currentData && currentData.data) {
+                        localStorage.setItem(cacheKey, JSON.stringify(currentData));
+                        seededFromMemory = true;
+                        keys.push(cacheKey);
+                    }
+                }
+            }
+            catch {
+                // The normal empty-cache diagnostic below is more useful.
+            }
+        }
+
         return keys;
     };
 
@@ -452,11 +482,29 @@ $patchExpression = @'
     }
 
     if (keys.length === 0) {
+        let totalStorageKeys = 0;
+        for (let index = 0; index < localStorage.length; index += 1) {
+            totalStorageKeys += 1;
+        }
+        const statsigRoot = window.__STATSIG__ || globalThis.__STATSIG__;
+        const statsigClient = getStatsigClient();
         return JSON.stringify({
             ok: false,
-            error: "No Statsig evaluation cache was found in the Codex page.",
+            error: "No Statsig evaluation cache was found in the Codex page within 45 seconds.",
             keys: [],
-            modified: 0
+            entries: [],
+            modified: 0,
+            alreadyTrue: 0,
+            cacheKeyCount: 0,
+            seededFromMemory,
+            diagnostics: {
+                origin: String(location.origin || ""),
+                href: String(location.href || ""),
+                totalStorageKeys,
+                hasStatsigRoot: Boolean(statsigRoot),
+                hasStatsigClient: Boolean(statsigClient),
+                statsigStatus: statsigClient ? String(statsigClient.loadingStatus || "") : ""
+            }
         });
     }
 
@@ -591,6 +639,7 @@ $patchExpression = @'
         modified,
         alreadyTrue,
         cacheKeyCount: keys.length,
+        seededFromMemory,
         entries: processed
     });
 })()
@@ -612,10 +661,28 @@ try {
     }
 
     $result = $rawResult | ConvertFrom-Json
-    $result.entries | Format-Table -AutoSize
+    $entriesProperty = $result.PSObject.Properties['entries']
+    if ($null -ne $entriesProperty -and $null -ne $entriesProperty.Value) {
+        @($entriesProperty.Value) | Format-Table -AutoSize
+    }
 
     if (-not $result.ok) {
-        throw 'The Statsig cache was read, but the i18n layer could not be changed.'
+        $diagnosticsProperty = $result.PSObject.Properties['diagnostics']
+        if ($null -ne $diagnosticsProperty -and $null -ne $diagnosticsProperty.Value) {
+            $diagnosticsProperty.Value | Format-List
+        }
+
+        $failureProperty = $result.PSObject.Properties['error']
+        $failureMessage = if (
+            $null -ne $failureProperty -and
+            -not [string]::IsNullOrWhiteSpace([string]$failureProperty.Value)
+        ) {
+            [string]$failureProperty.Value
+        }
+        else {
+            'The Statsig cache was read, but the i18n layer could not be changed.'
+        }
+        throw $failureMessage
     }
 
     Write-Host ''
