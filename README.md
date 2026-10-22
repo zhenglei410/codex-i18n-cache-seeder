@@ -4,6 +4,23 @@
 
 许可证：[MIT](LICENSE)
 
+## 仓库与一行命令
+
+- Gitee：<https://gitee.com/zhenglei410/codex-i18n-cache-seeder>
+- GitHub：<https://github.com/zhenglei410/codex-i18n-cache-seeder>
+
+完全退出 Codex 后，在普通 PowerShell 窗口中运行：
+
+```powershell
+irm https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1 | iex
+```
+
+GitHub Raw 地址：
+
+```powershell
+irm https://raw.githubusercontent.com/zhenglei410/codex-i18n-cache-seeder/main/Enable-CodexI18nCache.ps1 | iex
+```
+
 这是一个一次性 Windows PowerShell 工具。它会临时以本地 Chromium DevTools
 Protocol（CDP）端口启动已安装的 OpenAI Codex 桌面版，然后读取当前电脑现有的
 Statsig 评估缓存，只修改下面这个字段：
