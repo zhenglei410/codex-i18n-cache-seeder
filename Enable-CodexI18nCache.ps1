@@ -301,7 +301,7 @@ function Invoke-CdpExpression {
     )
 
     try {
-        $socket.ConnectAsync(
+        [void]$socket.ConnectAsync(
             [Uri]$WebSocketUrl,
             $connectTimeout.Token
         ).GetAwaiter().GetResult()
@@ -318,7 +318,7 @@ function Invoke-CdpExpression {
 
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
         $segment = [System.ArraySegment[byte]]::new($bytes)
-        $socket.SendAsync(
+        [void]$socket.SendAsync(
             $segment,
             [System.Net.WebSockets.WebSocketMessageType]::Text,
             $true,
@@ -412,7 +412,7 @@ function Invoke-CdpExpression {
         $connectTimeout.Dispose()
         if ($socket.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
             try {
-                $socket.CloseAsync(
+                [void]$socket.CloseAsync(
                     [System.Net.WebSockets.WebSocketCloseStatus]::NormalClosure,
                     'done',
                     [System.Threading.CancellationToken]::None
@@ -605,6 +605,11 @@ try {
         -WebSocketUrl $target.webSocketDebuggerUrl `
         -Expression $patchExpression `
         -WaitSeconds $TimeoutSeconds
+
+    $rawResult = @($rawResult) | Where-Object { $_ -is [string] } | Select-Object -Last 1
+    if ([string]::IsNullOrWhiteSpace($rawResult)) {
+        throw 'The Codex page did not return a JSON result.'
+    }
 
     $result = $rawResult | ConvertFrom-Json
     $result.entries | Format-Table -AutoSize
