@@ -457,11 +457,28 @@ $patchExpression = @'
             try {
                 const client = getStatsigClient();
                 if (client && client.dataAdapter) {
-                    const user = client.getContext().user;
+                    const context = client.getContext();
+                    const user = context.user;
                     const cacheKey = client.dataAdapter._getCacheKey(user);
                     const currentData = client.dataAdapter.getDataSync(user);
                     if (currentData && currentData.data) {
                         localStorage.setItem(cacheKey, JSON.stringify(currentData));
+                        seededFromMemory = true;
+                        keys.push(cacheKey);
+                    }
+                    else if (
+                        context.values &&
+                        typeof context.values === "object" &&
+                        context.values.has_updates === true
+                    ) {
+                        const cacheValue = {
+                            source: "Memory",
+                            data: JSON.stringify(context.values),
+                            receivedAt: Date.now(),
+                            stableID: context.stableID ?? null,
+                            fullUserHash: null
+                        };
+                        localStorage.setItem(cacheKey, JSON.stringify(cacheValue));
                         seededFromMemory = true;
                         keys.push(cacheKey);
                     }
@@ -488,6 +505,23 @@ $patchExpression = @'
         }
         const statsigRoot = window.__STATSIG__ || globalThis.__STATSIG__;
         const statsigClient = getStatsigClient();
+        let statsigValues = null;
+        let targetLayerState = null;
+        try {
+            if (statsigClient) {
+                const context = statsigClient.getContext();
+                statsigValues = context.values;
+                const layer = statsigClient.getLayer(targetLayer, {
+                    disableExposureLog: true
+                });
+                if (layer) {
+                    targetLayerState = String(layer.get("enable_i18n", "missing"));
+                }
+            }
+        }
+        catch {
+            // Diagnostics are best-effort.
+        }
         return JSON.stringify({
             ok: false,
             error: "No Statsig evaluation cache was found in the Codex page within 45 seconds.",
@@ -503,7 +537,10 @@ $patchExpression = @'
                 totalStorageKeys,
                 hasStatsigRoot: Boolean(statsigRoot),
                 hasStatsigClient: Boolean(statsigClient),
-                statsigStatus: statsigClient ? String(statsigClient.loadingStatus || "") : ""
+                statsigStatus: statsigClient ? String(statsigClient.loadingStatus || "") : "",
+                hasContextValues: Boolean(statsigValues),
+                contextHasUpdates: Boolean(statsigValues && statsigValues.has_updates === true),
+                targetLayerState
             }
         });
     }
