@@ -8,7 +8,9 @@ param(
 
     [switch]$NoLaunch,
 
-    [switch]$Reload
+    [switch]$Reload,
+
+    [switch]$BootstrapMissing
 )
 
 Set-StrictMode -Version Latest
@@ -432,7 +434,8 @@ $patchExpression = @'
     const prefix = "statsig.cached.evaluations.";
     const targetLayer = "72216192";
     const targetLayerHash = "4269166702";
-    const waitUntil = Date.now() + 45000;
+    const bootstrapMissing = __CODEX_I18N_BOOTSTRAP_MISSING__;
+    const waitUntil = Date.now() + (bootstrapMissing ? 10000 : 45000);
 
     const getStatsigClient = () => {
         const root = window.__STATSIG__ || globalThis.__STATSIG__;
@@ -498,6 +501,55 @@ $patchExpression = @'
         keys = cacheKeys();
     }
 
+    let bootstrapCreated = false;
+    if (keys.length === 0 && bootstrapMissing) {
+        try {
+            const client = getStatsigClient();
+            if (client && client.dataAdapter) {
+                const context = client.getContext();
+                const user = context.user;
+                const cacheKey = client.dataAdapter._getCacheKey(user);
+                const syntheticValues = {
+                    has_updates: true,
+                    response_format: "init-v2",
+                    time: Date.now(),
+                    feature_gates: {},
+                    dynamic_configs: {},
+                    layer_configs: {
+                        [targetLayer]: {
+                            v: "0",
+                            r: "codex-i18n-cache-bootstrap",
+                            s: [],
+                            is_device_based: true
+                        }
+                    },
+                    values: {
+                        "0": {
+                            enable_i18n: true,
+                            locale_source: "SYSTEM"
+                        }
+                    },
+                    param_stores: {},
+                    sdk_flags: {},
+                    exposures: {}
+                };
+                const cacheValue = {
+                    source: "Bootstrap",
+                    data: JSON.stringify(syntheticValues),
+                    receivedAt: Date.now(),
+                    stableID: context.stableID ?? null,
+                    fullUserHash: null
+                };
+                localStorage.setItem(cacheKey, JSON.stringify(cacheValue));
+                keys = [cacheKey];
+                bootstrapCreated = true;
+            }
+        }
+        catch {
+            // The diagnostic below explains why bootstrap could not be created.
+        }
+    }
+
     if (keys.length === 0) {
         let totalStorageKeys = 0;
         for (let index = 0; index < localStorage.length; index += 1) {
@@ -531,6 +583,7 @@ $patchExpression = @'
             alreadyTrue: 0,
             cacheKeyCount: 0,
             seededFromMemory,
+            bootstrapCreated,
             diagnostics: {
                 origin: String(location.origin || ""),
                 href: String(location.href || ""),
@@ -677,19 +730,24 @@ $patchExpression = @'
         alreadyTrue,
         cacheKeyCount: keys.length,
         seededFromMemory,
+        bootstrapCreated,
         entries: processed
     });
 })()
 '@
 
 try {
+    $effectivePatchExpression = $patchExpression.Replace(
+        '__CODEX_I18N_BOOTSTRAP_MISSING__',
+        $(if ($BootstrapMissing) { 'true' } else { 'false' })
+    )
     $debugPort = Resolve-DebugPort
     Write-Host "Connecting to Codex debugging endpoint on 127.0.0.1:$debugPort..."
     $target = Wait-CdpTarget -DebugPort $debugPort -WaitSeconds $TimeoutSeconds
 
     $rawResult = Invoke-CdpExpression `
         -WebSocketUrl $target.webSocketDebuggerUrl `
-        -Expression $patchExpression `
+        -Expression $effectivePatchExpression `
         -WaitSeconds $TimeoutSeconds
 
     $rawResult = @($rawResult) | Where-Object { $_ -is [string] } | Select-Object -Last 1
@@ -724,6 +782,10 @@ try {
 
     Write-Host ''
     Write-Host "Statsig cache updated. Modified: $($result.modified); already true: $($result.alreadyTrue)."
+    $bootstrapProperty = $result.PSObject.Properties['bootstrapCreated']
+    if ($null -ne $bootstrapProperty -and $bootstrapProperty.Value -eq $true) {
+        Write-Host 'Created a minimal i18n-only Statsig cache because no existing Layer was available.'
+    }
     Write-Host 'The API-key configuration, authentication data, and Codex installation were not changed.'
 
     if ($Reload) {

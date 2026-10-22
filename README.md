@@ -86,6 +86,24 @@ irm https://example.com/Codex-I18nCache.ps1 | iex
 -TimeoutSeconds 60  设置启动和 CDP 等待时间。
 -NoLaunch           只连接已经开启调试端口的 Codex。
 -Reload             修改后立即刷新页面。
+-BootstrapMissing   没有 Statsig 缓存或目标 Layer 时，创建最小中文缓存。
+
+如果目标电脑的 Statsig 没有返回任何评估值，可以看到：
+
+```text
+hasContextValues  : False
+targetLayerState : missing
+```
+
+此时不存在可修改的原始缓存。确认接受“创建最小缓存”后，执行：
+
+```powershell
+& ([scriptblock]::Create((irm https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1))) -BootstrapMissing
+```
+
+该模式会创建一个只包含 `72216192` Layer 的 `init-v2` Statsig 评估，
+其中设置 `enable_i18n=true` 和 `locale_source=SYSTEM`。其他 Statsig Layer
+不会写入伪造值，仍按缺失时的默认行为处理。
 ```
 
 ## 为什么不是永久配置
