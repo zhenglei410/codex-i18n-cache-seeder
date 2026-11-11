@@ -255,6 +255,22 @@ $u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-Code
 & ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing -NoLaunch -Port 9230
 ```
 
+### 5.1 `ConnectAsync` 报“无法连接到远程服务器”或 WebSocket 被关闭
+
+这表示 HTTP 调试接口可能已经出现，但页面 WebSocket target 已失效，或者返回的地址
+使用 `localhost`，而 Windows 将其解析到 IPv6 `::1`。新版脚本会：
+
+- 将 `ws://localhost:...` 和 `ws://[::1]:...` 强制改为 `ws://127.0.0.1:...`；
+- 最多重新获取 4 次 Codex 页面 target；
+- 在 WebSocket 连接失败后自动重连。
+
+更新脚本并换端口运行：
+
+```powershell
+$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1'
+& ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing -Port 9240 -TimeoutSeconds 120
+```
+
 ### 6. `No Statsig evaluation cache was found`
 
 先看诊断字段：
@@ -344,7 +360,7 @@ Get-FileHash .\Enable-CodexI18nCache.ps1 -Algorithm SHA256
 本文档发布时，脚本 SHA256 为：
 
 ```text
-2897C281194F856A00752FA09FE80937835934448E2041278A5D49E8CE5D01D7
+F1EF8169EA699609E0EB4C23CAE8B4886793BC5F606F644D87D30A9144B7D52F
 ```
 
 脚本后续更新后，以仓库 `main` 分支的 `Enable-CodexI18nCache.ps1`

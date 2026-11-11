@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateRange(0, 65535)]
     [int]$Port = 0,
@@ -290,6 +290,19 @@ function Wait-CdpTarget {
     throw "Codex did not expose an app:// page through CDP within $WaitSeconds seconds."
 }
 
+function Get-NormalizedWebSocketUri {
+    param([string]$WebSocketUrl)
+
+    $uri = [Uri]$WebSocketUrl
+    if ($uri.Host -eq 'localhost' -or $uri.Host -eq '::1' -or $uri.Host -eq '[::1]') {
+        $builder = [UriBuilder]$uri
+        $builder.Host = '127.0.0.1'
+        return $builder.Uri
+    }
+
+    return $uri
+}
+
 function Invoke-CdpExpression {
     param(
         [string]$WebSocketUrl,
@@ -298,13 +311,14 @@ function Invoke-CdpExpression {
     )
 
     $socket = [System.Net.WebSockets.ClientWebSocket]::new()
+    $connectUri = Get-NormalizedWebSocketUri -WebSocketUrl $WebSocketUrl
     $connectTimeout = [System.Threading.CancellationTokenSource]::new(
         [TimeSpan]::FromSeconds([Math]::Min($WaitSeconds, 10))
     )
 
     try {
         [void]$socket.ConnectAsync(
-            [Uri]$WebSocketUrl,
+            $connectUri,
             $connectTimeout.Token
         ).GetAwaiter().GetResult()
 
@@ -743,12 +757,56 @@ try {
     )
     $debugPort = Resolve-DebugPort
     Write-Host "Connecting to Codex debugging endpoint on 127.0.0.1:$debugPort..."
-    $target = Wait-CdpTarget -DebugPort $debugPort -WaitSeconds $TimeoutSeconds
 
-    $rawResult = Invoke-CdpExpression `
-        -WebSocketUrl $target.webSocketDebuggerUrl `
-        -Expression $effectivePatchExpression `
-        -WaitSeconds $TimeoutSeconds
+    $target = $null
+    $rawResult = $null
+    $maxAttempts = 4
+
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        $attemptTimeout = if ($attempt -eq 1) {
+            [Math]::Max(5, [Math]::Ceiling($TimeoutSeconds / 2))
+        }
+        else {
+            [Math]::Max(5, [Math]::Ceiling($TimeoutSeconds / 6))
+        }
+
+        try {
+            $target = Wait-CdpTarget `
+                -DebugPort $debugPort `
+                -WaitSeconds $attemptTimeout
+
+            $rawResult = Invoke-CdpExpression `
+                -WebSocketUrl $target.webSocketDebuggerUrl `
+                -Expression $effectivePatchExpression `
+                -WaitSeconds $TimeoutSeconds
+            break
+        }
+        catch {
+            $lastError = $_
+            $errorText = $lastError.Exception.ToString()
+            $connectionFailurePatterns = @(
+                'WebSocket',
+                '远程服务器',
+                'closed before returning',
+                '关闭了 WebSocket'
+            )
+            $isConnectionFailure = [bool](
+                $connectionFailurePatterns |
+                    Where-Object { $errorText -match $_ } |
+                    Select-Object -First 1
+            )
+
+            if (-not $isConnectionFailure -or $attempt -ge $maxAttempts) {
+                throw
+            }
+
+            Write-Warning (
+                "CDP connection attempt $attempt/$maxAttempts failed; " +
+                'refreshing the Codex page target and retrying.'
+            )
+            Start-Sleep -Milliseconds 750
+        }
+    }
 
     $rawResult = @($rawResult) | Where-Object { $_ -is [string] } | Select-Object -Last 1
     if ([string]::IsNullOrWhiteSpace($rawResult)) {
