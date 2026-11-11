@@ -100,6 +100,21 @@ locale_source = "SYSTEM"
 
 ## 推荐用法
 
+### 模式零：强制重置进程后运行
+
+如果 Codex 已被 CC Switch、托盘或旧实例占用，导致调试端口无法连接，可以使用
+独立的重置入口。它会强制关闭所有 `ChatGPT`、`Codex` 和相关进程，然后运行
+最新版汉化工具：
+
+```powershell
+$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Reset-And-Enable-CodexI18n.ps1'
+$text = (Invoke-RestMethod $u).TrimStart([char]0xFEFF)
+& ([scriptblock]::Create($text))
+```
+
+此命令会结束未保存的 Codex 会话，必须在 Codex 外部的 PowerShell 窗口运行。
+建议先退出 CC Switch 托盘，避免它自动重新启动 Codex。
+
 ### 模式一：缺失时自动创建
 
 适用于首次使用、英文界面、没有 Statsig 缓存，或此前出现
