@@ -312,6 +312,8 @@ function Invoke-CdpExpression {
 
     $socket = [System.Net.WebSockets.ClientWebSocket]::new()
     $connectUri = Get-NormalizedWebSocketUri -WebSocketUrl $WebSocketUrl
+    # Codex CDP is a loopback-only connection. Do not route it through a system proxy.
+    $socket.Options.Proxy = $null
     $connectTimeout = [System.Threading.CancellationTokenSource]::new(
         [TimeSpan]::FromSeconds([Math]::Min($WaitSeconds, 10))
     )
@@ -795,6 +797,14 @@ try {
             )
 
             if (-not $isConnectionFailure -or $attempt -ge $maxAttempts) {
+                if ($null -ne $target) {
+                    $targetUri = Get-NormalizedWebSocketUri `
+                        -WebSocketUrl $target.webSocketDebuggerUrl
+                    Write-Warning (
+                        "Last CDP target: $($targetUri.Host):$($targetUri.Port) " +
+                        "$($targetUri.AbsolutePath)"
+                    )
+                }
                 throw
             }
 
