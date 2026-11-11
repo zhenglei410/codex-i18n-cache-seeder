@@ -293,19 +293,28 @@ function Wait-CdpTarget {
 function Get-WebSocketUrlFromTarget {
     param([object]$Target)
 
-    $property = $Target.PSObject.Properties['webSocketDebuggerUrl']
-    if ($null -eq $property -or $null -eq $property.Value) {
-        throw 'The Codex CDP target did not contain a WebSocket URL.'
-    }
+    $availableProperties = @()
+    foreach ($targetItem in @($Target)) {
+        if ($null -eq $targetItem -or $targetItem -is [string]) {
+            continue
+        }
 
-    foreach ($value in @($property.Value)) {
-        $match = [regex]::Match([string]$value, '(?i)wss?://[^\s]+')
-        if ($match.Success) {
-            return $match.Value
+        $property = $targetItem.PSObject.Properties['webSocketDebuggerUrl']
+        if ($null -eq $property -or $null -eq $property.Value) {
+            $availableProperties += @($targetItem.PSObject.Properties.Name)
+            continue
+        }
+
+        foreach ($value in @($property.Value)) {
+            $match = [regex]::Match([string]$value, '(?i)wss?://[^\s]+')
+            if ($match.Success) {
+                return $match.Value
+            }
         }
     }
 
-    throw 'The Codex CDP target did not contain a valid WebSocket URL.'
+    $names = @($availableProperties | Sort-Object -Unique) -join ', '
+    throw "The Codex CDP target did not contain a valid WebSocket URL. Available properties: $names"
 }
 
 function Get-NormalizedWebSocketUri {
