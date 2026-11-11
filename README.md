@@ -307,6 +307,55 @@ $u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-Code
 & ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing -Port 9240 -TimeoutSeconds 120
 ```
 
+### 5.2 `The Codex CDP target did not contain a WebSocket URL`
+
+如果多次重试后出现：
+
+```text
+The Codex CDP target did not contain a WebSocket URL.
+```
+
+或者 `Last CDP target` 中出现类似下面的内容：
+
+```text
+/devtools/page/AAA%20ws://127.0.0.1:9240/devtools/page/BBB%20ws://...
+```
+
+说明 `/json/list` 同时返回了多个 Codex 页面 target。旧版 PowerShell
+在读取 `$target.webSocketDebuggerUrl` 时进行了属性枚举，可能把多个
+WebSocket 地址用空格拼成一个字符串。这个字符串不是有效 URI，因此
+`ConnectAsync` 会不断失败。
+
+可以通过以下命令确认页面 target 数量：
+
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:9240/json/list' |
+    Select-Object type, url, webSocketDebuggerUrl |
+    Format-List
+```
+
+处理原则：
+
+- 不要把多个 WebSocket URL 手工拼在一起；
+- 遍历所有候选 target；
+- 跳过缺少 `webSocketDebuggerUrl` 的对象；
+- 只提取第一条合法的 `ws://` 或 `wss://` 地址；
+- 连接失败后重新请求 `/json/list`，而不是复用失效 target。
+
+最新版已经实现上述处理。使用独立重置入口可以直接获取最新版：
+
+```powershell
+$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Reset-And-Enable-CodexI18n.ps1'
+$text = (Invoke-RestMethod $u).TrimStart([char]0xFEFF)
+& ([scriptblock]::Create($text))
+```
+
+该修复对应提交：
+
+```text
+2aa2383 fix: scan all CDP targets for websocket URL
+```
+
 ### 6. `No Statsig evaluation cache was found`
 
 先看诊断字段：
