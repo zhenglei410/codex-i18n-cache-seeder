@@ -202,6 +202,25 @@ $u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-Code
 & ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing
 ```
 
+### 2.1 `ScriptBlock::Create` 在 `[CmdletBinding()]` 处解析失败
+
+如果出现：
+
+```text
+“（”后面应为表达式
+[int]$Port = 0
+赋值表达式无效
+```
+
+通常是下载到的脚本文本开头带有 UTF-8 BOM。最新版文件已改为无 BOM。
+重新下载最新版即可。如果仍需防御当前缓存文本，可以先去掉 BOM：
+
+```powershell
+$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1'
+$text = (Invoke-RestMethod $u).TrimStart([char]0xFEFF)
+& ([scriptblock]::Create($text)) -BootstrapMissing
+```
+
 ### 3. `Codex is already running without the required debugging port`
 
 Codex 已经在没有调试端口的情况下运行。先保存工作，完全退出 Codex，再重新执行。
@@ -360,7 +379,7 @@ Get-FileHash .\Enable-CodexI18nCache.ps1 -Algorithm SHA256
 本文档发布时，脚本 SHA256 为：
 
 ```text
-F1EF8169EA699609E0EB4C23CAE8B4886793BC5F606F644D87D30A9144B7D52F
+44F7F7CB7A8902B922F5D68F15DD96EE85656695C361231444B6909E9F311BA1
 ```
 
 脚本后续更新后，以仓库 `main` 分支的 `Enable-CodexI18nCache.ps1`

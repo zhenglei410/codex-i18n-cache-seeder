@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [ValidateRange(0, 65535)]
     [int]$Port = 0,
@@ -786,9 +786,7 @@ try {
             $errorText = $lastError.Exception.ToString()
             $connectionFailurePatterns = @(
                 'WebSocket',
-                '远程服务器',
-                'closed before returning',
-                '关闭了 WebSocket'
+                'closed before returning'
             )
             $isConnectionFailure = [bool](
                 $connectionFailurePatterns |
