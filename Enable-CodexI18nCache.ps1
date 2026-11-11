@@ -267,17 +267,17 @@ function Wait-CdpTarget {
     while ([DateTime]::UtcNow -lt $deadline) {
         try {
             $targets = @(Invoke-RestMethod -Uri "http://127.0.0.1:$DebugPort/json/list" -TimeoutSec 2)
-            $candidate = $targets |
+            $candidates = @($targets |
                 Where-Object {
                     $_.type -eq 'page' -and
                     -not [string]::IsNullOrWhiteSpace($_.webSocketDebuggerUrl) -and
                     $_.url -like 'app://*'
                 } |
                 Sort-Object -Property @{ Expression = { $_.url -notlike 'app://-/index.html*' } } |
-                Select-Object -First 1
+                Select-Object -First 1)
 
-            if ($null -ne $candidate) {
-                return $candidate
+            if ($candidates.Count -gt 0) {
+                return $candidates[0]
             }
         }
         catch {
@@ -288,6 +288,24 @@ function Wait-CdpTarget {
     }
 
     throw "Codex did not expose an app:// page through CDP within $WaitSeconds seconds."
+}
+
+function Get-WebSocketUrlFromTarget {
+    param([object]$Target)
+
+    $property = $Target.PSObject.Properties['webSocketDebuggerUrl']
+    if ($null -eq $property -or $null -eq $property.Value) {
+        throw 'The Codex CDP target did not contain a WebSocket URL.'
+    }
+
+    foreach ($value in @($property.Value)) {
+        $match = [regex]::Match([string]$value, '(?i)wss?://[^\s]+')
+        if ($match.Success) {
+            return $match.Value
+        }
+    }
+
+    throw 'The Codex CDP target did not contain a valid WebSocket URL.'
 }
 
 function Get-NormalizedWebSocketUri {
@@ -761,6 +779,7 @@ try {
     Write-Host "Connecting to Codex debugging endpoint on 127.0.0.1:$debugPort..."
 
     $target = $null
+    $targetWebSocketUrl = $null
     $rawResult = $null
     $maxAttempts = 4
 
@@ -776,9 +795,10 @@ try {
             $target = Wait-CdpTarget `
                 -DebugPort $debugPort `
                 -WaitSeconds $attemptTimeout
+            $targetWebSocketUrl = Get-WebSocketUrlFromTarget -Target $target
 
             $rawResult = Invoke-CdpExpression `
-                -WebSocketUrl $target.webSocketDebuggerUrl `
+                -WebSocketUrl $targetWebSocketUrl `
                 -Expression $effectivePatchExpression `
                 -WaitSeconds $TimeoutSeconds
             break
@@ -797,9 +817,9 @@ try {
             )
 
             if (-not $isConnectionFailure -or $attempt -ge $maxAttempts) {
-                if ($null -ne $target) {
+                if (-not [string]::IsNullOrWhiteSpace($targetWebSocketUrl)) {
                     $targetUri = Get-NormalizedWebSocketUri `
-                        -WebSocketUrl $target.webSocketDebuggerUrl
+                        -WebSocketUrl $targetWebSocketUrl
                     Write-Warning (
                         "Last CDP target: $($targetUri.Host):$($targetUri.Port) " +
                         "$($targetUri.AbsolutePath)"
@@ -856,7 +876,7 @@ try {
 
     if ($Reload) {
         $null = Invoke-CdpExpression `
-            -WebSocketUrl $target.webSocketDebuggerUrl `
+            -WebSocketUrl $targetWebSocketUrl `
             -Expression 'window.location.reload(); "reloading"' `
             -WaitSeconds 10
         Write-Host 'Requested a page reload. If Statsig refreshes successfully, its server value may replace the cached value.'

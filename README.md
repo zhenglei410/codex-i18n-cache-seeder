@@ -296,6 +296,7 @@ $u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-Code
 
 - 将 `ws://localhost:...` 和 `ws://[::1]:...` 强制改为 `ws://127.0.0.1:...`；
 - 显式禁用系统代理，避免本地 `127.0.0.1` WebSocket 被代理转发；
+- 当 `/json/list` 返回多个页面时，只提取第一条合法的 WebSocket URL；
 - 最多重新获取 4 次 Codex 页面 target；
 - 在 WebSocket 连接失败后自动重连。
 
@@ -395,7 +396,7 @@ Get-FileHash .\Enable-CodexI18nCache.ps1 -Algorithm SHA256
 本文档发布时，脚本 SHA256 为：
 
 ```text
-7F4E68905151BDB326CD9405851374AAEB38B11305C72148EFCE144730C598E2
+C4B6F5F59E7B8F3E594C33EBEB5DDCC1643D06AF90137BF09AFB74AD304CB18C
 ```
 
 脚本后续更新后，以仓库 `main` 分支的 `Enable-CodexI18nCache.ps1`
