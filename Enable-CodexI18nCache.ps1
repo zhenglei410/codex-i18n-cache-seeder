@@ -266,18 +266,40 @@ function Wait-CdpTarget {
     $deadline = [DateTime]::UtcNow.AddSeconds($WaitSeconds)
     while ([DateTime]::UtcNow -lt $deadline) {
         try {
-            $targets = @(Invoke-RestMethod -Uri "http://127.0.0.1:$DebugPort/json/list" -TimeoutSec 2)
-            $candidates = @($targets |
-                Where-Object {
-                    $_.type -eq 'page' -and
-                    -not [string]::IsNullOrWhiteSpace($_.webSocketDebuggerUrl) -and
-                    $_.url -like 'app://*'
-                } |
-                Sort-Object -Property @{ Expression = { $_.url -notlike 'app://-/index.html*' } } |
-                Select-Object -First 1)
+            $targets = [object[]](Invoke-RestMethod -Uri "http://127.0.0.1:$DebugPort/json/list" -TimeoutSec 2)
+            $candidates = @()
+            foreach ($targetItem in $targets) {
+                if ($null -eq $targetItem) {
+                    continue
+                }
+
+                $typeProperty = $targetItem.PSObject.Properties['type']
+                $urlProperty = $targetItem.PSObject.Properties['url']
+                $webSocketProperty = $targetItem.PSObject.Properties['webSocketDebuggerUrl']
+
+                if (
+                    $null -eq $typeProperty -or
+                    $null -eq $urlProperty -or
+                    $null -eq $webSocketProperty
+                ) {
+                    continue
+                }
+
+                if (
+                    $typeProperty.Value -eq 'page' -and
+                    $urlProperty.Value -like 'app://*' -and
+                    -not [string]::IsNullOrWhiteSpace([string]$webSocketProperty.Value)
+                ) {
+                    $candidates += $targetItem
+                }
+            }
 
             if ($candidates.Count -gt 0) {
-                return $candidates[0]
+                return @($candidates |
+                    Sort-Object -Property @{
+                        Expression = { $_.url -notlike 'app://-/index.html*' }
+                    } |
+                    Select-Object -First 1)[0]
             }
         }
         catch {

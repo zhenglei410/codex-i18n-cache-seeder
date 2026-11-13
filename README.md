@@ -296,6 +296,9 @@ $u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-Code
 
 - 将 `ws://localhost:...` 和 `ws://[::1]:...` 强制改为 `ws://127.0.0.1:...`；
 - 显式禁用系统代理，避免本地 `127.0.0.1` WebSocket 被代理转发；
+- 将 `/json/list` 的结果显式转换为 `[object[]]`，逐项检查，避免 PowerShell 对整个数组做属性枚举；
+- 只选择 `type=page` 且 `url=app://...` 的主界面 target；
+- 忽略 `codex-sandbox://...` 的内嵌可视化 target；
 - 当 `/json/list` 返回多个页面或 target 集合时，遍历全部候选对象并只提取第一条合法的 WebSocket URL；
 - 最多重新获取 4 次 Codex 页面 target；
 - 在 WebSocket 连接失败后自动重连。
@@ -355,6 +358,57 @@ $text = (Invoke-RestMethod $u).TrimStart([char]0xFEFF)
 ```text
 2aa2383 fix: scan all CDP targets for websocket URL
 ```
+
+### 5.3 命令成功但界面仍为英文
+
+先不要认定 Codex 不读取缓存。当前 Codex 版本仍会读取：
+
+```text
+statsig.cached.evaluations.*
+```
+
+如果页面 target 很多，旧版脚本可能错误连接到：
+
+```text
+codex-sandbox://...
+```
+
+这是内嵌可视化 WebView，不是 Codex 主界面。它没有 Statsig Client、
+没有 `app://-/index.html` 页面缓存，因此会出现：
+
+```text
+totalStorageKeys  : 0
+hasStatsigRoot    : False
+hasStatsigClient  : False
+```
+
+即使命令流程结束，也不会影响 Codex 主界面的中文开关。
+
+可以通过以下命令确认当前 target：
+
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:9240/json/list' |
+    Select-Object type, url, webSocketDebuggerUrl |
+    Format-List
+```
+
+正确目标应包含：
+
+```text
+type : page
+url  : app://-/index.html
+```
+
+脚本执行成功后，至少应看到类似：
+
+```text
+statsig.cached.evaluations.<hash>  already-true
+Statsig cache updated. Modified: 0; already true: 2.
+```
+
+这说明 Codex 确实读取到了缓存，且目标开关已经是 `true`。
+
+最新版已改为显式逐项解析 target 数组，不再把 sandbox 和主页面合并处理。
 
 ### 6. `No Statsig evaluation cache was found`
 
@@ -445,7 +499,7 @@ Get-FileHash .\Enable-CodexI18nCache.ps1 -Algorithm SHA256
 本文档发布时，脚本 SHA256 为：
 
 ```text
-52C6177B3B86238017B7BB0F34277E5A6684BFBB291E5EE4B0F07E5FF09F070D
+19221795F4507216437C14AC022673A34346030CA91E2D947C30C0C6DD344C13
 ```
 
 脚本后续更新后，以仓库 `main` 分支的 `Enable-CodexI18nCache.ps1`
