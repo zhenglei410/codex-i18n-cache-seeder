@@ -16,6 +16,21 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Write-CommandFailure {
+    param([object]$ErrorRecord)
+
+    Write-Host ''
+    Write-Host '========================================' -ForegroundColor DarkGray
+    Write-Host '[失败] 中文缓存修复未完成。' -ForegroundColor Red
+    Write-Host "原因：$($ErrorRecord.Exception.Message)" -ForegroundColor Red
+    Write-Host '建议：完全退出 CC Switch 和所有 Codex 进程后重试。' -ForegroundColor Yellow
+}
+
+trap {
+    Write-CommandFailure $_
+    break
+}
+
 $processPattern = '^(ChatGPT|Codex|codex-command-runner|codex-windows-sandbox-service|codex-code-mode-host)(\.exe)?$'
 
 Write-Warning (
@@ -115,10 +130,6 @@ try {
     }
 }
 catch {
-    Write-Host ''
-    Write-Host '========================================' -ForegroundColor DarkGray
-    Write-Host '[失败] 中文缓存修复未完成。' -ForegroundColor Red
-    Write-Host "原因：$($_.Exception.Message)" -ForegroundColor Red
-    Write-Host '建议：完全退出 CC Switch 和所有 Codex 进程后重试。' -ForegroundColor Yellow
-    throw
+    Write-CommandFailure $_
+    return
 }
