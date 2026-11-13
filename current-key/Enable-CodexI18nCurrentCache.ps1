@@ -10,7 +10,9 @@ param(
 
     [switch]$InspectOnly,
 
-    [switch]$NoBootstrap
+    [switch]$NoBootstrap,
+
+    [switch]$RestartAfterSuccess
 )
 
 Set-StrictMode -Version Latest
@@ -195,6 +197,64 @@ function Start-CodexWithDebugPort {
     }
 
     Write-Host "Started Codex with debugging port $DebugPort."
+}
+
+function Stop-CodexRuntimeProcesses {
+    $pattern = '^(ChatGPT|Codex|codex-command-runner|codex-windows-sandbox-service|codex-code-mode-host)(\.exe)?$'
+    $targets = @(
+        Get-CimInstance Win32_Process |
+            Where-Object { $_.Name -match $pattern }
+    )
+
+    foreach ($process in $targets) {
+        if ($null -ne (Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue)) {
+            try {
+                Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+            }
+            catch {
+                # A parent process may already have stopped this child.
+            }
+        }
+    }
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+        Start-Sleep -Milliseconds 250
+        $remaining = @(
+            Get-CimInstance Win32_Process |
+                Where-Object { $_.Name -match $pattern }
+        )
+    }
+    while ($remaining.Count -gt 0 -and [DateTime]::UtcNow -lt $deadline)
+
+    if ($remaining.Count -gt 0) {
+        throw 'Codex processes did not stop before restart.'
+    }
+}
+
+function Start-CodexNormally {
+    Add-AppActivationInterop
+    [uint32]$processId = 0
+    $hr = [CodexCurrentCache.NativeActivation]::Activate(
+        (Get-CodexAumid),
+        '',
+        [ref]$processId
+    )
+
+    if ($hr -lt 0) {
+        throw ('ApplicationActivationManager failed with HRESULT 0x{0:X8}.' -f $hr)
+    }
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        Start-Sleep -Milliseconds 300
+        $running = @(Get-CodexMainProcesses)
+    }
+    while ($running.Count -eq 0 -and [DateTime]::UtcNow -lt $deadline)
+
+    if ($running.Count -eq 0) {
+        throw 'Codex did not start after activation.'
+    }
 }
 
 function Resolve-DebugPort {
@@ -694,4 +754,15 @@ Write-Host ''
 Write-Host "Current client cache key: $($result.currentCacheKey)"
 Write-Host "Cached enable_i18n: $($result.cachedEnableI18n)"
 Write-Host "Stale cache keys left untouched: $(@($result.staleCacheKeys).Count)"
-Write-Host 'Completely exit Codex, then start it normally to load the current-key cache.'
+
+if ($RestartAfterSuccess) {
+    # Give Chromium a brief window to commit the Local Storage write.
+    Start-Sleep -Seconds 2
+    Write-Host 'Stopping the debugging instance and restarting Codex normally...'
+    Stop-CodexRuntimeProcesses
+    Start-CodexNormally
+    Write-Host 'Codex restarted normally with the current-key cache.'
+}
+else {
+    Write-Host 'Completely exit Codex, then start it normally to load the current-key cache.'
+}

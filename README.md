@@ -13,36 +13,46 @@
 
 ![PowerShell 中成功创建中文缓存的运行示例](docs/images/success.png)
 
-> 截图中的 `Modified: 0; already true: 1` 也是成功状态：最小缓存已经创建，
-> 目标 Layer 在创建时已经是 `enable_i18n=true`。
+> 上方截图来自旧版命令，仅作为历史运行示例。
 
 ## 先看结论
 
-推荐直接运行“缺失时创建最小缓存”模式。它同时兼容两种环境：
+**新入口已替代旧版缓存命令。** 它会：
 
-1. 已有 Statsig 缓存：只修改 `enable_i18n`，保留其他缓存内容；
-2. 完全没有 Statsig 评估值：创建一份只包含中文开关的最小缓存。
+1. 关闭当前 Codex 和相关进程；
+2. 等待 Statsig Client 进入 `Ready`；
+3. 用 `dataAdapter._getCacheKey(context.user)` 计算当前缓存键；
+4. 只写当前键，不修改旧缓存键；
+5. 成功后自动关闭调试实例，并正常重启 Codex；
+6. 最后用中文明确显示 `[成功]` 或 `[失败]`。
 
-运行前必须**完全退出 Codex**，并在独立的 Windows PowerShell 窗口中执行：
+必须在 Codex 外部的 Windows PowerShell 窗口中执行：
 
 ```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1'
-& ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing
+$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/current-key/Reset-And-Enable-CodexI18nCurrentCache.ps1'
+$text = (Invoke-RestMethod $u).TrimStart([char]0xFEFF)
+& ([scriptblock]::Create($text))
 ```
 
-看到类似下面的结果即表示缓存写入成功：
+成功时会看到：
 
 ```text
-Statsig cache updated. Modified: 0; already true: 1.
-Created a minimal i18n-only Statsig cache because no existing Layer was available.
-The API-key configuration, authentication data, and Codex installation were not changed.
+[成功] 中文缓存已经写入，Codex 已重新正常启动。
+请检查界面是否显示中文。
 ```
 
-随后：
+失败时会看到：
 
-1. 完全退出 Codex；
-2. 正常启动 Codex；
-3. 检查界面是否显示中文。
+```text
+[失败] 中文缓存修复未完成。
+原因：...
+```
+
+旧版脚本继续保留，用于兼容历史链接和故障对照：
+
+- `Enable-CodexI18nCache.ps1`
+- `Reset-And-Enable-CodexI18n.ps1`
+- 说明见 [legacy/README.md](legacy/README.md)
 
 ## 它是怎么工作的
 

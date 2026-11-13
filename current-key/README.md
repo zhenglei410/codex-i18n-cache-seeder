@@ -29,7 +29,8 @@ client.dataAdapter._getCacheKey(context.user)
 ## 推荐用法
 
 必须在 Codex 外部的 PowerShell 中运行。命令会先关闭所有
-`ChatGPT`、`Codex` 及相关进程。
+`ChatGPT`、`Codex` 及相关进程；写入成功后会自动关闭调试实例并正常重启
+Codex，最后用中文显示 `[成功]` 或 `[失败]`。
 
 ```powershell
 $u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/current-key/Reset-And-Enable-CodexI18nCurrentCache.ps1'
@@ -87,6 +88,7 @@ cachedEnableI18n = true
 | `-NoLaunch` | 只连接已经带调试端口的 Codex |
 | `-Port 9240` | 指定本地 CDP 端口 |
 | `-TimeoutSeconds 120` | 设置等待时间 |
+| `-NoAutoRestart` | 写入成功后不自动重启 Codex，供诊断时使用 |
 
 ## 版本说明
 

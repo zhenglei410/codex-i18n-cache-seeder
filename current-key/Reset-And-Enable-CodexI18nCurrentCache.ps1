@@ -8,7 +8,9 @@ param(
 
     [switch]$SkipProcessStop,
 
-    [switch]$ValidateOnly
+    [switch]$ValidateOnly,
+
+    [switch]$NoAutoRestart
 )
 
 Set-StrictMode -Version Latest
@@ -90,6 +92,33 @@ $response = Invoke-RestMethod -Uri $api -TimeoutSec 30
 $scriptBytes = [Convert]::FromBase64String(([string]$response.content -replace '\s', ''))
 $scriptText = [Text.Encoding]::UTF8.GetString($scriptBytes).TrimStart([char]0xFEFF)
 
-& ([scriptblock]::Create($scriptText)) `
-    -Port $Port `
-    -TimeoutSeconds $TimeoutSeconds
+try {
+    $coreArguments = @{
+        Port = $Port
+        TimeoutSeconds = $TimeoutSeconds
+    }
+    if (-not $NoAutoRestart) {
+        $coreArguments.RestartAfterSuccess = $true
+    }
+
+    & ([scriptblock]::Create($scriptText)) @coreArguments
+
+    Write-Host ''
+    Write-Host '========================================' -ForegroundColor DarkGray
+    if ($NoAutoRestart) {
+        Write-Host '[成功] 当前缓存键的中文开关已经写入。' -ForegroundColor Green
+        Write-Host '已跳过自动重启，请手动完全退出并重新打开 Codex。' -ForegroundColor Yellow
+    }
+    else {
+        Write-Host '[成功] 中文缓存已经写入，Codex 已重新正常启动。' -ForegroundColor Green
+        Write-Host '请检查界面是否显示中文。' -ForegroundColor Green
+    }
+}
+catch {
+    Write-Host ''
+    Write-Host '========================================' -ForegroundColor DarkGray
+    Write-Host '[失败] 中文缓存修复未完成。' -ForegroundColor Red
+    Write-Host "原因：$($_.Exception.Message)" -ForegroundColor Red
+    Write-Host '建议：完全退出 CC Switch 和所有 Codex 进程后重试。' -ForegroundColor Yellow
+    throw
+}
