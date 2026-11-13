@@ -29,9 +29,7 @@
 必须在 Codex 外部的 Windows PowerShell 窗口中执行：
 
 ```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/current-key/Reset-And-Enable-CodexI18nCurrentCache.ps1'
-$text = (Invoke-RestMethod $u).TrimStart([char]0xFEFF)
-& ([scriptblock]::Create($text))
+irm https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/codex-zh.ps1 | iex
 ```
 
 成功时会看到：
@@ -47,6 +45,9 @@ $text = (Invoke-RestMethod $u).TrimStart([char]0xFEFF)
 [失败] 中文缓存修复未完成。
 原因：...
 ```
+
+自动重启前，脚本会刷新 Codex 主页面、重新连接 CDP，并再次读取当前缓存键。
+只有确认 `cachedEnableI18n=true` 后才会关闭 Codex。
 
 旧版脚本继续保留，用于兼容历史链接和故障对照：
 

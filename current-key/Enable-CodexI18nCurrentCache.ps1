@@ -433,6 +433,110 @@ function Invoke-CdpExpression {
     }
 }
 
+function Confirm-CurrentCacheAfterReload {
+    param(
+        [int]$DebugPort,
+        [string]$CurrentCacheKey,
+        [int]$TimeoutSeconds
+    )
+
+    $target = Wait-CdpTarget -DebugPort $DebugPort -WaitSeconds $TimeoutSeconds
+    $webSocketUrl = Get-WebSocketUrl -Target $target
+
+    try {
+        $null = Invoke-CdpExpression `
+            -WebSocketUrl $webSocketUrl `
+            -Expression 'location.reload(); "reload-requested"' `
+            -WaitSeconds 5
+    }
+    catch {
+        # Reload normally closes the old CDP connection.
+    }
+
+    Start-Sleep -Milliseconds 750
+    $escapedKey = $CurrentCacheKey.Replace('\', '\\').Replace("'", "\'")
+    $verifyExpression = @"
+(() => {
+    const key = '$escapedKey';
+    const raw = localStorage.getItem(key);
+    if (raw === null) {
+        return JSON.stringify({ ok: false, reason: "cache-key-missing", key });
+    }
+    try {
+        const wrapper = JSON.parse(raw);
+        const payload = typeof wrapper.data === "string"
+            ? JSON.parse(wrapper.data)
+            : wrapper.data;
+        const values = payload?.values;
+        let value = null;
+        for (const metadata of Object.values(payload?.layer_configs || {})) {
+            if (!metadata || typeof metadata !== "object") continue;
+            const candidates = [];
+            if (metadata.v !== undefined && values) {
+                candidates.push(values[String(metadata.v)]);
+            }
+            candidates.push(metadata.value, metadata);
+            value = candidates.find(candidate =>
+                candidate &&
+                Object.prototype.hasOwnProperty.call(candidate, "enable_i18n")
+            ) || null;
+            if (value) break;
+        }
+        return JSON.stringify({
+            ok: Boolean(value && value.enable_i18n === true),
+            key,
+            cachedEnableI18n: value?.enable_i18n ?? null,
+            cachedLocaleSource: value?.locale_source ?? null
+        });
+    }
+    catch (error) {
+        return JSON.stringify({
+            ok: false,
+            reason: "cache-parse-failed",
+            key,
+            error: String(error)
+        });
+    }
+})()
+"@
+
+    $lastVerification = $null
+    for ($attempt = 1; $attempt -le 10; $attempt++) {
+        try {
+            $target = Wait-CdpTarget -DebugPort $DebugPort -WaitSeconds 5
+            $webSocketUrl = Get-WebSocketUrl -Target $target
+            $rawVerification = Invoke-CdpExpression `
+                -WebSocketUrl $webSocketUrl `
+                -Expression $verifyExpression `
+                -WaitSeconds 10
+            $verificationText = @($rawVerification) |
+                Where-Object { $_ -is [string] } |
+                Select-Object -Last 1
+
+            if (-not [string]::IsNullOrWhiteSpace($verificationText)) {
+                $lastVerification = $verificationText | ConvertFrom-Json
+                if ($lastVerification.ok -eq $true) {
+                    return $lastVerification
+                }
+            }
+        }
+        catch {
+            # The app may still be recreating the renderer after reload.
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+
+    if ($null -ne $lastVerification) {
+        throw (
+            'Cache persistence verification failed. ' +
+            "Cached enable_i18n: $($lastVerification.cachedEnableI18n)"
+        )
+    }
+
+    throw 'Cache persistence verification failed after page reload.'
+}
+
 $pageExpression = @'
 (async () => {
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -756,8 +860,13 @@ Write-Host "Cached enable_i18n: $($result.cachedEnableI18n)"
 Write-Host "Stale cache keys left untouched: $(@($result.staleCacheKeys).Count)"
 
 if ($RestartAfterSuccess) {
-    # Give Chromium a brief window to commit the Local Storage write.
-    Start-Sleep -Seconds 2
+    Write-Host "Reloading the Codex page to verify cache key persistence..."
+    $persistence = Confirm-CurrentCacheAfterReload `
+        -DebugPort $debugPort `
+        -CurrentCacheKey $result.currentCacheKey `
+        -TimeoutSeconds $TimeoutSeconds
+    Write-Host "Cache persistence verified: $($persistence.cachedEnableI18n)"
+
     Write-Host 'Stopping the debugging instance and restarting Codex normally...'
     Stop-CodexRuntimeProcesses
     Start-CodexNormally

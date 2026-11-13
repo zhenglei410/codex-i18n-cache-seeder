@@ -33,10 +33,11 @@ client.dataAdapter._getCacheKey(context.user)
 Codex，最后用中文显示 `[成功]` 或 `[失败]`。
 
 ```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/current-key/Reset-And-Enable-CodexI18nCurrentCache.ps1'
-$text = (Invoke-RestMethod $u).TrimStart([char]0xFEFF)
-& ([scriptblock]::Create($text))
+irm https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/codex-zh.ps1 | iex
 ```
+
+该一行命令会调用当前键重置工具。自动重启前，工具会刷新页面、重新连接主
+`app://-/index.html`，并确认当前缓存键中的 `enable_i18n=true`。
 
 ## 只检查、不修改
 
