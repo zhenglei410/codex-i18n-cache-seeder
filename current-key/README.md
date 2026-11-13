@@ -66,6 +66,9 @@ staleCacheKeys
 3. 两者都没有：创建最小 i18n-only `init-v2` 缓存；
 4. 使用 `-NoBootstrap` 时，第三种情况直接失败。
 
+工具会先等待 Statsig Client 进入 `Ready`，再计算 `currentCacheKey`。避免在
+`Loading` 阶段使用过渡身份计算出一个之后会变化的缓存键。
+
 成功条件只绑定当前键：
 
 ```text

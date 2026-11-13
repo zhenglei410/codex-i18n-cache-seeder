@@ -381,7 +381,7 @@ $pageExpression = @'
     const targetLayer = "72216192";
     const targetLayerHash = "4269166702";
     const cachePrefix = "statsig.cached.evaluations.";
-    const deadline = Date.now() + 30000;
+    const deadline = Date.now() + __READY_TIMEOUT_MS__;
 
     const getRoot = () => window.__STATSIG__ || globalThis.__STATSIG__;
     const getClient = () => {
@@ -392,7 +392,10 @@ $pageExpression = @'
     };
 
     let client = getClient();
-    while (!client && Date.now() < deadline) {
+    while (
+        (!client || String(client.loadingStatus || "") !== "Ready") &&
+        Date.now() < deadline
+    ) {
         await sleep(250);
         client = getClient();
     }
@@ -404,6 +407,17 @@ $pageExpression = @'
             origin: location.origin,
             href: location.href,
             hasStatsigRoot: Boolean(getRoot())
+        });
+    }
+
+    if (String(client.loadingStatus || "") !== "Ready") {
+        return JSON.stringify({
+            ok: false,
+            error: "Statsig Client did not reach Ready before the timeout.",
+            origin: location.origin,
+            href: location.href,
+            htmlLang: document.documentElement.lang,
+            statsigStatus: client.loadingStatus
         });
     }
 
@@ -638,6 +652,9 @@ $effectiveExpression = $pageExpression.Replace(
 ).Replace(
     '__NO_BOOTSTRAP__',
     $(if ($NoBootstrap) { 'true' } else { 'false' })
+).Replace(
+    '__READY_TIMEOUT_MS__',
+    [string]([Math]::Min(60000, $TimeoutSeconds * 1000))
 )
 
 $debugPort = Resolve-DebugPort
