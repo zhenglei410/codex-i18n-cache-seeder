@@ -1,9 +1,12 @@
 # Legacy commands
 
-旧版命令继续保留，用于兼容历史链接和故障对照。它们不再作为推荐入口：
+旧版脚本的原始内容完整保留在：
 
-- [`Enable-CodexI18nCache.ps1`](../Enable-CodexI18nCache.ps1)
-- [`Reset-And-Enable-CodexI18n.ps1`](../Reset-And-Enable-CodexI18n.ps1)
+- [`legacy/Enable-CodexI18nCache.ps1`](Enable-CodexI18nCache.ps1)
+- [`legacy/Reset-And-Enable-CodexI18n.ps1`](Reset-And-Enable-CodexI18n.ps1)
+
+根目录的同名文件现在是兼容转发层，继续接受旧参数，但实际运行新的
+`current-key` 工具。
 
 旧版的主要问题是会遍历所有 `statsig.cached.evaluations.*`。当机器上存在旧账号
 留下的缓存键时，可能修改旧键并报告 `already true`，但 Codex 当前 Client 实际

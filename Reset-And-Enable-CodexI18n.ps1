@@ -8,99 +8,28 @@ param(
 
     [switch]$SkipProcessStop,
 
-    [switch]$ValidateOnly
+    [switch]$ValidateOnly,
+
+    [switch]$NoAutoRestart
 )
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+# Compatibility entrypoint for historical command URLs.
+$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/current-key/Reset-And-Enable-CodexI18nCurrentCache.ps1'
+$text = (Invoke-RestMethod $u).TrimStart([char]0xFEFF)
 
-$processPattern = '^(ChatGPT|Codex|codex-command-runner|codex-windows-sandbox-service|codex-code-mode-host)(\.exe)?$'
-
-Write-Warning (
-    'This command will force-close ChatGPT/Codex processes. ' +
-    'Save all work and run it from an external PowerShell window.'
-)
-
-$remaining = @()
-
-if (-not $SkipProcessStop) {
-    $targets = @(
-        Get-CimInstance Win32_Process |
-            Where-Object { $_.Name -match $processPattern }
-    )
-
-    foreach ($process in $targets) {
-        $liveProcess = Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue
-        if ($null -eq $liveProcess) {
-            continue
-        }
-
-        try {
-            Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
-            Write-Host "Stopped: $($process.Name) / PID $($process.ProcessId)"
-        }
-        catch {
-            Write-Warning (
-                "Could not stop $($process.Name) / PID $($process.ProcessId): " +
-                $_.Exception.Message
-            )
-        }
-    }
-
-    $deadline = [DateTime]::UtcNow.AddSeconds(10)
-    do {
-        Start-Sleep -Milliseconds 250
-        $remaining = @(
-            Get-CimInstance Win32_Process |
-                Where-Object { $_.Name -match $processPattern }
-        )
-    }
-    while ($remaining.Count -gt 0 -and [DateTime]::UtcNow -lt $deadline)
-
-    if ($remaining.Count -gt 0) {
-        $remaining |
-            Select-Object ProcessId, Name, CommandLine |
-            Format-List
-        throw (
-            'Some ChatGPT/Codex processes are still running. ' +
-            'Run PowerShell as administrator or exit the controlling launcher first.'
-        )
-    }
+$arguments = @{
+    Port = $Port
+    TimeoutSeconds = $TimeoutSeconds
 }
 
-$ccSwitchProcesses = @(
-    Get-CimInstance Win32_Process |
-        Where-Object {
-            $_.Name -match 'cc.?switch' -or
-            $_.CommandLine -match 'cc.?switch'
-        }
-)
-
-if ($ccSwitchProcesses.Count -gt 0) {
-    Write-Warning (
-        'CC Switch is still running. If it auto-restarts Codex, ' +
-        'exit CC Switch from its tray before continuing.'
-    )
+if ($SkipProcessStop) {
+    $arguments.SkipProcessStop = $true
 }
-
 if ($ValidateOnly) {
-    Write-Host "Validation passed. Remaining Codex process count: $($remaining.Count)"
-    return
+    $arguments.ValidateOnly = $true
+}
+if ($NoAutoRestart) {
+    $arguments.NoAutoRestart = $true
 }
 
-$api = 'https://gitee.com/api/v5/repos/zhenglei410/codex-i18n-cache-seeder/contents/Enable-CodexI18nCache.ps1?ref=main'
-$response = Invoke-RestMethod -Uri $api -TimeoutSec 30
-
-if ([string]::IsNullOrWhiteSpace([string]$response.content)) {
-    throw 'The Gitee API did not return the Codex i18n cache script.'
-}
-
-$encodedContent = [string]$response.content -replace '\s', ''
-$scriptBytes = [Convert]::FromBase64String($encodedContent)
-$scriptText = [Text.Encoding]::UTF8.GetString($scriptBytes).TrimStart([char]0xFEFF)
-
-$coreScript = [scriptblock]::Create($scriptText)
-& $coreScript `
-    -BootstrapMissing `
-    -Port $Port `
-    -TimeoutSeconds $TimeoutSeconds
+& ([scriptblock]::Create($text)) @arguments

@@ -49,11 +49,14 @@ irm https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/codex-zh.ps1 
 自动重启前，脚本会刷新 Codex 主页面、重新连接 CDP，并再次读取当前缓存键。
 只有确认 `cachedEnableI18n=true` 后才会关闭 Codex。
 
-旧版脚本继续保留，用于兼容历史链接和故障对照：
+旧版原始脚本完整备份在 `legacy/`，用于历史对照：
 
-- `Enable-CodexI18nCache.ps1`
-- `Reset-And-Enable-CodexI18n.ps1`
+- `legacy/Enable-CodexI18nCache.ps1`
+- `legacy/Reset-And-Enable-CodexI18n.ps1`
 - 说明见 [legacy/README.md](legacy/README.md)
+
+根目录同名文件现在是兼容转发层，继续接受历史命令和 `-BootstrapMissing` 参数，
+但内部执行新的 `current-key` 流程。
 
 ## 它是怎么工作的
 
@@ -136,6 +139,9 @@ $u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-Code
 & ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing
 ```
 
+该历史入口现在与 `codex-zh.ps1` 使用同一套当前键写入、缓存验证和自动重启流程。
+`-BootstrapMissing` 为兼容旧脚本而保留。
+
 ### 模式二：只修改现有缓存
 
 适用于已经有 Statsig 缓存、只希望打开中文开关的电脑：
@@ -144,7 +150,7 @@ $u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-Code
 Invoke-RestMethod 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1' | Invoke-Expression
 ```
 
-如果电脑上根本没有缓存，此模式会明确报错，而不会自行创建。此时改用模式一。
+兼容入口会自动创建当前客户端缓存键，因此不再出现旧版“没有缓存就失败”的行为。
 
 ### 本地文件
 
@@ -510,11 +516,11 @@ Get-FileHash .\Enable-CodexI18nCache.ps1 -Algorithm SHA256
 本文档发布时，脚本 SHA256 为：
 
 ```text
-19221795F4507216437C14AC022673A34346030CA91E2D947C30C0C6DD344C13
+CBD2C03F8290E8A81CCD77FCE1B02FB12EC498F736A6B80C8173914726951804
 ```
 
-脚本后续更新后，以仓库 `main` 分支的 `Enable-CodexI18nCache.ps1`
-文件为准。
+该哈希对应兼容转发层；实际核心逻辑以
+`current-key/Enable-CodexI18nCurrentCache.ps1` 为准。
 
 ## 安全边界
 
@@ -525,8 +531,8 @@ Get-FileHash .\Enable-CodexI18nCache.ps1 -Algorithm SHA256
 - 不修改 API Key、认证信息或模型提供商；
 - 不安装服务、自启动项或托盘程序；
 - 不持续覆盖 Statsig 内存对象；
-- 默认只修改现有缓存中的 `enable_i18n`；
-- 仅在显式使用 `-BootstrapMissing` 时创建最小中文缓存。
+- 只写当前 Client 使用的缓存键，旧键保持不变；
+- 当前键缺失时，优先使用当前 `context.values`，否则创建最小中文缓存。
 
 `irm ... | iex` 会直接执行远程 PowerShell 内容。请只运行来自本项目固定地址、
 经过审查的脚本。正式分发时推荐同时发布版本号和 SHA256。
@@ -549,7 +555,11 @@ Get-FileHash .\Enable-CodexI18nCache.ps1 -Algorithm SHA256
 
 | 文件 | 说明 |
 | --- | --- |
-| `Enable-CodexI18nCache.ps1` | 自包含主程序 |
+| `codex-zh.ps1` | 单行远程入口 |
+| `current-key/` | 当前缓存键主实现 |
+| `Enable-CodexI18nCache.ps1` | 旧 URL 兼容转发层 |
+| `Reset-And-Enable-CodexI18n.ps1` | 旧重置 URL 兼容转发层 |
+| `legacy/` | 旧实现备份 |
 | `Run.cmd` | Windows 双击启动入口 |
 | `docs/images/success.png` | 成功运行截图 |
 | `LICENSE` | MIT 许可证 |
