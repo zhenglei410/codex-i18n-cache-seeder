@@ -1,580 +1,108 @@
-# Codex 中文缓存种子工具
+# Codex 中文界面一键修复
 
-一个面向 Windows Codex 桌面版的轻量工具，用于把 Statsig 的
-`enable_i18n` 开关写为 `true`，让已经内置中文语言包的 Codex 正常显示中文界面。
+让 Windows Codex 桌面版正确使用内置的简体中文语言包。
 
-脚本是自包含的单文件 PowerShell 程序。它不会修改 Codex 安装目录、API Key、
-模型提供商或认证信息，也不安装后台服务、托盘程序或长期注入器。
+无需安装，一条 PowerShell 命令即可写入当前客户端缓存、验证结果，并自动重启
+Codex。
 
-[MIT License](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 - Gitee：<https://gitee.com/zhenglei410/codex-i18n-cache-seeder>
 - GitHub：<https://github.com/zhenglei410/codex-i18n-cache-seeder>
 
-![PowerShell 中成功创建中文缓存的运行示例](docs/images/success.png)
+![Codex 中文界面一键修复成功运行](docs/images/one-line-success.png)
 
-> 上方截图来自旧版命令，仅作为历史运行示例。
+## 一行运行
 
-## 先看结论
+先保存工作。点击开始菜单，搜索 `PowerShell`，**不要使用 Codex 内置终端**。
 
-**新入口已替代旧版缓存命令。** 它会：
-
-1. 关闭当前 Codex 和相关进程；
-2. 等待 Statsig Client 进入 `Ready`；
-3. 用 `dataAdapter._getCacheKey(context.user)` 计算当前缓存键；
-4. 写入当前 Client 精确缓存键；
-5. 同时修复所有已有的历史评估缓存键；
-6. 成功后自动关闭调试实例，并正常重启 Codex；
-7. 最后用中文明确显示 `[成功]` 或 `[失败]`。
-
-必须在 Codex 外部的 Windows PowerShell 窗口中执行：
+在 Windows PowerShell 中粘贴：
 
 ```powershell
 irm https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/codex-zh.ps1 | iex
 ```
 
-成功时会看到：
+命令会关闭当前 Codex，写入中文缓存，验证缓存已经落盘，然后自动重新打开 Codex。
+
+成功时显示：
 
 ```text
 [成功] 中文缓存已经写入，Codex 已重新正常启动。
 请检查界面是否显示中文。
 ```
 
-失败时会看到：
+失败时显示：
 
 ```text
 [失败] 中文缓存修复未完成。
 原因：...
 ```
 
-自动重启前，脚本会刷新 Codex 主页面、重新连接 CDP，并再次读取当前缓存键。
-只有确认 `cachedEnableI18n=true` 后才会关闭 Codex。
+## 解决什么问题
 
-旧版原始脚本完整备份在 `legacy/`，用于历史对照：
+Codex 桌面包已经包含简体中文资源，但界面是否启用由 Statsig Layer
+`72216192` 的 `enable_i18n` 控制。远程配置不可用或客户端缓存键变化时，界面会
+回退英文。
 
-- `legacy/Enable-CodexI18nCache.ps1`
-- `legacy/Reset-And-Enable-CodexI18n.ps1`
-- 说明见 [legacy/README.md](legacy/README.md)
+本项目解决以下情况：
 
-根目录同名文件现在是兼容转发层，继续接受历史命令和 `-BootstrapMissing` 参数，
-但内部执行新的 `current-key` 流程。
+- 已设置 `localeOverride = "zh-CN"`，但界面仍是英文；
+- 配置文件中看起来正常，客户端却没有加载中文；
+- 机器上存在旧账号留下的缓存键，工具只改旧键造成“假成功”；
+- Codex 更新后缓存键变化，需要重新写入当前键。
 
-## 它是怎么工作的
+## 它做了什么
 
-Codex 桌面版自带 `zh-CN` 语言资源，但会通过 Statsig Layer `72216192`
-判断是否加载本地化消息：
+1. 完全关闭旧的 ChatGPT / Codex 进程；
+2. 等待 Statsig Client 进入 `Ready`；
+3. 计算当前真实缓存键：
 
-```text
-layer_configs["72216192"] -> enable_i18n = true
-locale_source = "SYSTEM"
+   ```javascript
+   client.dataAdapter._getCacheKey(context.user)
+   ```
+
+4. 写入当前缓存键；
+5. 同时修复所有已有的历史评估缓存键；
+6. 刷新 Codex 主页面并重新连接验证；
+7. 确认 `enable_i18n=true` 后，正常重启 Codex；
+8. 最后显示中文成功或失败结果。
+
+只写当前键时可以使用：
+
+```powershell
+$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/current-key/Enable-CodexI18nCurrentCache.ps1'
+$text = (Invoke-RestMethod $u).TrimStart([char]0xFEFF)
+& ([scriptblock]::Create($text)) -CurrentKeyOnly -NoLaunch -Port 9240
 ```
 
-脚本会临时带本地 CDP 调试端口启动同一个 Codex，然后：
+## 支持环境
 
-1. 等待 `app://-/index.html` 出现；
-2. 查找 `statsig.cached.evaluations.*`；
-3. 找到 Layer `72216192`；
-4. 默认模式只修改 `enable_i18n=true`；
-5. 如果没有缓存，但 Statsig Client 已有内存评估值，则用该值生成当前电脑的缓存；
-6. 使用 `-BootstrapMissing` 且没有任何可用评估缓存时，创建最小 `init-v2` 缓存；
-7. 写入完成后退出，不保持注入会话。
-
-`-BootstrapMissing` 生成的缓存只包含中文 Layer，不伪造其他功能开关：
-
-```json
-{
-  "has_updates": true,
-  "response_format": "init-v2",
-  "layer_configs": {
-    "72216192": {
-      "v": "0",
-      "r": "codex-i18n-cache-bootstrap",
-      "s": [],
-      "is_device_based": true
-    }
-  },
-  "values": {
-    "0": {
-      "enable_i18n": true,
-      "locale_source": "SYSTEM"
-    }
-  }
-}
-```
-
-## 环境要求
-
-- Windows 10 或 Windows 11；
-- 微软商店 / MSIX 版 Codex，包名 `OpenAI.Codex`；
+- Windows 10 / Windows 11；
+- Microsoft Store / MSIX 版 `OpenAI.Codex`；
 - Windows PowerShell 5.1 或 PowerShell 7；
-- 能从 Gitee 下载脚本，或已经在本地保存脚本；
-- 运行前完全退出 Codex；
-- Codex 继续使用你现有的 API Key / 模型提供商配置。
-
-不要从 Codex 内置终端运行本工具，因为该终端会随着 Codex 退出而关闭。
-
-## 推荐用法
-
-### 模式零：强制重置进程后运行
-
-如果 Codex 已被 CC Switch、托盘或旧实例占用，导致调试端口无法连接，可以使用
-独立的重置入口。它会强制关闭所有 `ChatGPT`、`Codex` 和相关进程，然后运行
-最新版汉化工具：
-
-```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Reset-And-Enable-CodexI18n.ps1'
-$text = (Invoke-RestMethod $u).TrimStart([char]0xFEFF)
-& ([scriptblock]::Create($text))
-```
-
-此命令会结束未保存的 Codex 会话，必须在 Codex 外部的 PowerShell 窗口运行。
-建议先退出 CC Switch 托盘，避免它自动重新启动 Codex。
-
-### 模式一：缺失时自动创建
-
-适用于首次使用、英文界面、没有 Statsig 缓存，或此前出现
-`hasContextValues=False`、`targetLayerState=missing` 的电脑。
-
-```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1'
-& ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing
-```
-
-该历史入口现在与 `codex-zh.ps1` 使用同一套当前键写入、缓存验证和自动重启流程。
-`-BootstrapMissing` 为兼容旧脚本而保留。
-
-### 模式二：只修改现有缓存
-
-适用于已经有 Statsig 缓存、只希望打开中文开关的电脑：
-
-```powershell
-Invoke-RestMethod 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1' | Invoke-Expression
-```
-
-兼容入口会自动创建当前客户端缓存键，因此不再出现旧版“没有缓存就失败”的行为。
-
-### 本地文件
-
-```powershell
-Set-Location 'C:\path\to\codex-i18n-cache-seeder'
-pwsh -NoProfile -File .\Enable-CodexI18nCache.ps1 -BootstrapMissing
-```
-
-也可以双击 `Run.cmd`，再在弹窗中使用默认参数执行。
-
-## 参数
-
-| 参数 | 作用 |
-| --- | --- |
-| `-BootstrapMissing` | 没有任何可用 Statsig 缓存时，创建最小中文缓存 |
-| `-Port 9230` | 指定本地 CDP 端口 |
-| `-TimeoutSeconds 60` | 设置等待 Codex 和 CDP 的超时时间 |
-| `-NoLaunch` | 只连接已经带调试端口运行的 Codex |
-| `-Reload` | 写入后立即刷新页面。正常重启仍然更可靠 |
-
-需要传参数时，使用 `scriptblock` 形式：
-
-```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1'
-& ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing -Port 9230 -TimeoutSeconds 90
-```
-
-## 成功后的配置检查
-
-Codex 的官方桌面语言设置应包含：
-
-```toml
-[desktop]
-localeOverride = "zh-CN"
-```
-
-检查命令：
-
-```powershell
-$config = Join-Path $HOME '.codex\config.toml'
-Select-String -Path $config -Pattern '^\s*localeOverride\s*=' -ErrorAction SilentlyContinue
-```
-
-如果找不到这一项，可在 Codex 的语言设置中选择简体中文；也可以手动在
-`[desktop]` 段加入：
-
-```toml
-localeOverride = "zh-CN"
-```
-
-修改配置后仍需完全退出并重新启动 Codex。
-
-## 常见错误与处理方法
-
-### 1. `PropertyNotFoundStrict`：找不到 `error` 或 `entries`
-
-这是旧版脚本在 PowerShell 严格模式下访问可选 CDP 字段导致的：
-
-```text
-在此对象上找不到属性“error”
-在此对象上找不到属性“entries”
-```
-
-处理方法：重新获取最新版脚本，不要继续使用旧变量中的代码：
-
-```powershell
-Remove-Variable script -ErrorAction SilentlyContinue
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1'
-& ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing
-```
-
-### 2. `无效的 JSON 基元: System.Threading.Tasks.VoidTaskResult`
-
-原因是旧版 PowerShell 把 `SendAsync().GetResult()` 的异步返回值混进了 JSON
-结果流。新版已显式丢弃该返回值并只接受字符串结果。
-
-处理方法仍是重新获取最新版后运行：
-
-```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1'
-& ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing
-```
-
-### 2.1 `ScriptBlock::Create` 在 `[CmdletBinding()]` 处解析失败
-
-如果出现：
-
-```text
-“（”后面应为表达式
-[int]$Port = 0
-赋值表达式无效
-```
-
-通常是下载到的脚本文本开头带有 UTF-8 BOM。最新版文件已改为无 BOM。
-重新下载最新版即可。如果仍需防御当前缓存文本，可以先去掉 BOM：
-
-```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1'
-$text = (Invoke-RestMethod $u).TrimStart([char]0xFEFF)
-& ([scriptblock]::Create($text)) -BootstrapMissing
-```
-
-### 3. `Codex is already running without the required debugging port`
-
-Codex 已经在没有调试端口的情况下运行。先保存工作，完全退出 Codex，再重新执行。
-
-可以检查主进程：
-
-```powershell
-Get-CimInstance Win32_Process -Filter "Name='ChatGPT.exe'" |
-    Where-Object { $_.CommandLine -notmatch '--type=' } |
-    Select-Object ProcessId, CommandLine
-```
-
-确实已经保存工作后，可以用命令关闭 Codex：
-
-```powershell
-Get-Process ChatGPT -ErrorAction SilentlyContinue | Stop-Process
-```
-
-优先从 Codex 界面或托盘正常退出，强制结束进程可能丢失未保存内容。
-
-### 4. 端口 `9230` 被占用
-
-检查监听端口：
-
-```powershell
-Get-NetTCPConnection -LocalPort 9230 -State Listen -ErrorAction SilentlyContinue
-```
-
-换一个端口运行：
-
-```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1'
-& ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing -Port 9240
-```
-
-### 5. `Codex did not expose an app:// page through CDP`
-
-常见原因是 Codex 尚未加载完成、旧进程仍占用单实例，或调试端口没有成功传入。
-
-先完全退出 Codex，再增加超时时间：
-
-```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1'
-& ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing -TimeoutSeconds 120
-```
-
-如果 Codex 已经手动带调试端口启动，可以仅连接现有实例：
-
-```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1'
-& ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing -NoLaunch -Port 9230
-```
-
-### 5.1 `ConnectAsync` 报“无法连接到远程服务器”或 WebSocket 被关闭
-
-这表示 HTTP 调试接口可能已经出现，但页面 WebSocket target 已失效，或者返回的地址
-使用 `localhost`，而 Windows 将其解析到 IPv6 `::1`。新版脚本会：
-
-- 将 `ws://localhost:...` 和 `ws://[::1]:...` 强制改为 `ws://127.0.0.1:...`；
-- 显式禁用系统代理，避免本地 `127.0.0.1` WebSocket 被代理转发；
-- 将 `/json/list` 的结果显式转换为 `[object[]]`，逐项检查，避免 PowerShell 对整个数组做属性枚举；
-- 只选择 `type=page` 且 `url=app://...` 的主界面 target；
-- 忽略 `codex-sandbox://...` 的内嵌可视化 target；
-- 当 `/json/list` 返回多个页面或 target 集合时，遍历全部候选对象并只提取第一条合法的 WebSocket URL；
-- 最多重新获取 4 次 Codex 页面 target；
-- 在 WebSocket 连接失败后自动重连。
-
-更新脚本并换端口运行：
-
-```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1'
-& ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing -Port 9240 -TimeoutSeconds 120
-```
-
-### 5.2 `The Codex CDP target did not contain a WebSocket URL`
-
-如果多次重试后出现：
-
-```text
-The Codex CDP target did not contain a WebSocket URL.
-```
-
-或者 `Last CDP target` 中出现类似下面的内容：
-
-```text
-/devtools/page/AAA%20ws://127.0.0.1:9240/devtools/page/BBB%20ws://...
-```
-
-说明 `/json/list` 同时返回了多个 Codex 页面 target。旧版 PowerShell
-在读取 `$target.webSocketDebuggerUrl` 时进行了属性枚举，可能把多个
-WebSocket 地址用空格拼成一个字符串。这个字符串不是有效 URI，因此
-`ConnectAsync` 会不断失败。
-
-可以通过以下命令确认页面 target 数量：
-
-```powershell
-Invoke-RestMethod 'http://127.0.0.1:9240/json/list' |
-    Select-Object type, url, webSocketDebuggerUrl |
-    Format-List
-```
-
-处理原则：
-
-- 不要把多个 WebSocket URL 手工拼在一起；
-- 遍历所有候选 target；
-- 跳过缺少 `webSocketDebuggerUrl` 的对象；
-- 只提取第一条合法的 `ws://` 或 `wss://` 地址；
-- 连接失败后重新请求 `/json/list`，而不是复用失效 target。
-
-最新版已经实现上述处理。使用独立重置入口可以直接获取最新版：
-
-```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Reset-And-Enable-CodexI18n.ps1'
-$text = (Invoke-RestMethod $u).TrimStart([char]0xFEFF)
-& ([scriptblock]::Create($text))
-```
-
-该修复对应提交：
-
-```text
-2aa2383 fix: scan all CDP targets for websocket URL
-```
-
-### 5.3 命令成功但界面仍为英文
-
-先不要认定 Codex 不读取缓存。当前 Codex 版本仍会读取：
-
-```text
-statsig.cached.evaluations.*
-```
-
-如果页面 target 很多，旧版脚本可能错误连接到：
-
-```text
-codex-sandbox://...
-```
-
-这是内嵌可视化 WebView，不是 Codex 主界面。它没有 Statsig Client、
-没有 `app://-/index.html` 页面缓存，因此会出现：
-
-```text
-totalStorageKeys  : 0
-hasStatsigRoot    : False
-hasStatsigClient  : False
-```
-
-即使命令流程结束，也不会影响 Codex 主界面的中文开关。
-
-可以通过以下命令确认当前 target：
-
-```powershell
-Invoke-RestMethod 'http://127.0.0.1:9240/json/list' |
-    Select-Object type, url, webSocketDebuggerUrl |
-    Format-List
-```
-
-正确目标应包含：
-
-```text
-type : page
-url  : app://-/index.html
-```
-
-脚本执行成功后，至少应看到类似：
-
-```text
-statsig.cached.evaluations.<hash>  already-true
-Statsig cache updated. Modified: 0; already true: 2.
-```
-
-这说明 Codex 确实读取到了缓存，且目标开关已经是 `true`。
-
-最新版已改为显式逐项解析 target 数组，不再把 sandbox 和主页面合并处理。
-
-### 6. `No Statsig evaluation cache was found`
-
-先看诊断字段：
-
-```text
-hasStatsigRoot
-hasStatsigClient
-statsigStatus
-hasContextValues
-contextHasUpdates
-targetLayerState
-```
-
-如果出现下面组合：
-
-```text
-hasStatsigClient  : True
-statsigStatus     : Ready
-hasContextValues  : False
-targetLayerState  : missing
-```
-
-说明 Statsig 客户端已初始化，但服务器没有返回任何评估值，目标 Layer 根本不存在。
-这时没有“原缓存”可修改，必须使用：
-
-```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1'
-& ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing
-```
-
-### 7. 命令提示成功，但界面仍然是英文
-
-依次检查：
-
-1. 是否已经完全退出并重新启动 Codex，而不是只刷新页面；
-2. `localeOverride` 是否为 `zh-CN`；
-3. 是否同时运行了多个 Codex 实例；
-4. 是否从 Codex 内置终端而不是外部 PowerShell 运行；
-5. 重新运行带 `-BootstrapMissing` 的命令。
-
-检查语言配置：
-
-```powershell
-Select-String -Path (Join-Path $HOME '.codex\config.toml') -Pattern 'localeOverride'
-```
-
-### 8. 中文后来又变回英文
-
-Statsig 缓存不是永久配置。如果 Codex 后续成功联网并收到
-`enable_i18n=false`，服务器结果可能覆盖本地缓存。
-
-重新运行：
-
-```powershell
-$u = 'https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/Enable-CodexI18nCache.ps1'
-& ([scriptblock]::Create((Invoke-RestMethod $u))) -BootstrapMissing
-```
-
-### 9. 无法下载脚本、TLS 或执行策略错误
-
-Windows PowerShell 5.1 可先启用 TLS 1.2：
-
-```powershell
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-```
-
-如果本地脚本因执行策略无法运行，可仅对当前 PowerShell 进程放宽策略：
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-```
-
-也可以显式启动 PowerShell：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Enable-CodexI18nCache.ps1 -BootstrapMissing
-```
-
-### 10. 需要确认下载的脚本版本
-
-下载到本地后核对 SHA256：
-
-```powershell
-Get-FileHash .\Enable-CodexI18nCache.ps1 -Algorithm SHA256
-```
-
-本文档发布时，脚本 SHA256 为：
-
-```text
-9CA0034DDC1BB61EBA0FF0EBDCD455BB99FF0CA4EE65C08E6E131DC55A5CF57D
-```
-
-该哈希对应兼容转发层；实际核心逻辑以
-`current-key/Enable-CodexI18nCurrentCache.ps1` 为准。
+- 建议退出 CC Switch 托盘，避免它重新启动 Codex。
 
 ## 安全边界
 
-该工具：
+- 不修改 `app.asar`、WindowsApps 或 Codex 安装文件；
+- 不读取或上传 API Key、登录令牌和对话内容；
+- 不修改模型提供商；
+- 不安装后台服务、自启动项或托盘程序；
+- 只通过 `127.0.0.1` 连接本地 Codex 调试端口；
+- 缓存只会影响本机 Codex 桌面界面。
 
-- 只使用 `127.0.0.1` 上的临时 CDP 端口；
-- 不修改 `app.asar`、WindowsApps 或 MSIX 安装包；
-- 不修改 API Key、认证信息或模型提供商；
-- 不安装服务、自启动项或托盘程序；
-- 不持续覆盖 Statsig 内存对象；
-- 默认同时写当前 Client 键和已有历史缓存键；使用 `-CurrentKeyOnly` 可关闭历史键写入；
-- 当前键缺失时，优先使用当前 `context.values`，否则创建最小中文缓存。
+## 说明
 
-`irm ... | iex` 会直接执行远程 PowerShell 内容。请只运行来自本项目固定地址、
-经过审查的脚本。正式分发时推荐同时发布版本号和 SHA256。
+- 这是非官方社区工具，与 OpenAI 无隶属关系。
+- 聊天正文、模型回复、代码和命令输出不属于桌面 UI 翻译范围。
+- 少量新面板仍显示英文，可能是当前 Codex 版本尚未提供对应中文词条。
+- Codex 更新后如果再次回退英文，重新运行同一条命令即可。
 
-## 为什么它不是永久方案
+旧版命令 URL 仍然兼容，但内部已经转发到当前版本。历史实现和迁移说明见
+[legacy/README.md](legacy/README.md)。
 
-这里写入的是 Statsig 缓存，不是 Codex 的永久功能开关。以下情况可能使缓存失效
-或被覆盖：
+如果这个工具帮你恢复了中文界面，欢迎 Star 支持项目。
 
-- Codex 更新；
-- Statsig SDK、缓存格式或 Layer 编号变化；
-- 成功联网后服务器返回新的评估结果；
-- 清除 Codex 站点数据；
-- `stableID`、账号或 SDK Key 发生变化。
+## License
 
-需要跨更新永久强制时，应使用持续注入或修改应用程序的方案。本项目刻意保持为
-一次性缓存工具，尽量减少对 Codex 本体和认证环境的影响。
-
-## 项目文件
-
-| 文件 | 说明 |
-| --- | --- |
-| `codex-zh.ps1` | 单行远程入口 |
-| `current-key/` | 当前缓存键主实现 |
-| `Enable-CodexI18nCache.ps1` | 旧 URL 兼容转发层 |
-| `Reset-And-Enable-CodexI18n.ps1` | 旧重置 URL 兼容转发层 |
-| `legacy/` | 旧实现备份 |
-| `Run.cmd` | Windows 双击启动入口 |
-| `docs/images/success.png` | 成功运行截图 |
-| `LICENSE` | MIT 许可证 |
-
-## 开发与回归
-
-当前实现已覆盖以下回归场景：
-
-- 直接修改已有 `statsig.cached.evaluations.*`；
-- 处理 Layer 名称和 Statsig DJB2 哈希名称；
-- 从 Ready Statsig Client 的内存数据生成缓存；
-- 没有任何评估值时创建最小 `init-v2` 缓存；
-- PowerShell 5.1 / 7 解析和严格模式；
-- CDP 响应中的可选字段与异步返回值；
-- 确认除目标 `enable_i18n` 外的已有字段保持不变。
-
-本项目是非官方社区工具，与 OpenAI 无隶属关系。
+[MIT](LICENSE)
