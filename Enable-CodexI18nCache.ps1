@@ -12,7 +12,9 @@ param(
 
     [switch]$Reload,
 
-    [switch]$NoAutoRestart
+    [switch]$NoAutoRestart,
+
+    [switch]$CurrentKeyOnly
 )
 
 # Compatibility entrypoint for historical command URLs.
@@ -27,6 +29,9 @@ $arguments = @{
 
 if ($NoAutoRestart) {
     $arguments.NoAutoRestart = $true
+}
+if ($CurrentKeyOnly) {
+    $arguments.CurrentKeyOnly = $true
 }
 
 & ([scriptblock]::Create($text)) @arguments

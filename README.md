@@ -22,9 +22,10 @@
 1. 关闭当前 Codex 和相关进程；
 2. 等待 Statsig Client 进入 `Ready`；
 3. 用 `dataAdapter._getCacheKey(context.user)` 计算当前缓存键；
-4. 只写当前键，不修改旧缓存键；
-5. 成功后自动关闭调试实例，并正常重启 Codex；
-6. 最后用中文明确显示 `[成功]` 或 `[失败]`。
+4. 写入当前 Client 精确缓存键；
+5. 同时修复所有已有的历史评估缓存键；
+6. 成功后自动关闭调试实例，并正常重启 Codex；
+7. 最后用中文明确显示 `[成功]` 或 `[失败]`。
 
 必须在 Codex 外部的 Windows PowerShell 窗口中执行：
 
@@ -516,7 +517,7 @@ Get-FileHash .\Enable-CodexI18nCache.ps1 -Algorithm SHA256
 本文档发布时，脚本 SHA256 为：
 
 ```text
-CBD2C03F8290E8A81CCD77FCE1B02FB12EC498F736A6B80C8173914726951804
+9CA0034DDC1BB61EBA0FF0EBDCD455BB99FF0CA4EE65C08E6E131DC55A5CF57D
 ```
 
 该哈希对应兼容转发层；实际核心逻辑以
@@ -531,7 +532,7 @@ CBD2C03F8290E8A81CCD77FCE1B02FB12EC498F736A6B80C8173914726951804
 - 不修改 API Key、认证信息或模型提供商；
 - 不安装服务、自启动项或托盘程序；
 - 不持续覆盖 Statsig 内存对象；
-- 只写当前 Client 使用的缓存键，旧键保持不变；
+- 默认同时写当前 Client 键和已有历史缓存键；使用 `-CurrentKeyOnly` 可关闭历史键写入；
 - 当前键缺失时，优先使用当前 `context.values`，否则创建最小中文缓存。
 
 `irm ... | iex` 会直接执行远程 PowerShell 内容。请只运行来自本项目固定地址、

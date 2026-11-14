@@ -12,6 +12,8 @@ param(
 
     [switch]$NoBootstrap,
 
+    [switch]$CurrentKeyOnly,
+
     [switch]$RestartAfterSuccess
 )
 
@@ -542,6 +544,7 @@ $pageExpression = @'
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     const inspectOnly = __INSPECT_ONLY__;
     const noBootstrap = __NO_BOOTSTRAP__;
+    const patchAllExisting = __PATCH_ALL_EXISTING__;
     const targetLayer = "72216192";
     const targetLayerHash = "4269166702";
     const cachePrefix = "statsig.cached.evaluations.";
@@ -609,6 +612,7 @@ $pageExpression = @'
             currentCacheKeyExists: currentCacheValue !== null,
             allCacheKeys,
             staleCacheKeys,
+            patchAllExisting,
             liveEnableI18n
         });
     }
@@ -671,9 +675,9 @@ $pageExpression = @'
         typeof value === "object" &&
         Object.prototype.hasOwnProperty.call(value, key);
 
-    const patchExistingLayer = () => {
-        const layerMap = payload?.layer_configs;
-        const values = payload?.values;
+    const patchExistingLayer = targetPayload => {
+        const layerMap = targetPayload?.layer_configs;
+        const values = targetPayload?.values;
         if (!layerMap || typeof layerMap !== "object") return false;
 
         for (const [name, metadata] of Object.entries(layerMap)) {
@@ -701,6 +705,34 @@ $pageExpression = @'
         }
 
         return false;
+    };
+
+    const insertI18nLayer = targetPayload => {
+        targetPayload.has_updates = true;
+        targetPayload.layer_configs = targetPayload.layer_configs || {};
+
+        if (targetPayload.response_format === "init-v2" || targetPayload.values) {
+            targetPayload.response_format = "init-v2";
+            targetPayload.values = targetPayload.values || {};
+            let index = 0;
+            while (hasOwn(targetPayload.values, String(index))) index += 1;
+            targetPayload.values[String(index)] = {
+                enable_i18n: true,
+                locale_source: "SYSTEM"
+            };
+            targetPayload.layer_configs[targetLayer] = {
+                v: String(index),
+                r: "codex-current-key",
+                s: [],
+                is_device_based: true
+            };
+        }
+        else {
+            targetPayload.layer_configs[targetLayer] = {
+                enable_i18n: true,
+                locale_source: "SYSTEM"
+            };
+        }
     };
 
     const findCachedI18nValue = currentPayload => {
@@ -733,33 +765,9 @@ $pageExpression = @'
         return null;
     };
 
-    let layerPatched = patchExistingLayer();
+    let layerPatched = patchExistingLayer(payload);
     if (!layerPatched && !noBootstrap) {
-        payload.has_updates = true;
-        payload.layer_configs = payload.layer_configs || {};
-
-        if (payload.response_format === "init-v2" || payload.values) {
-            payload.response_format = "init-v2";
-            payload.values = payload.values || {};
-            let index = 0;
-            while (hasOwn(payload.values, String(index))) index += 1;
-            payload.values[String(index)] = {
-                enable_i18n: true,
-                locale_source: "SYSTEM"
-            };
-            payload.layer_configs[targetLayer] = {
-                v: String(index),
-                r: "codex-current-key",
-                s: [],
-                is_device_based: true
-            };
-        }
-        else {
-            payload.layer_configs[targetLayer] = {
-                enable_i18n: true,
-                locale_source: "SYSTEM"
-            };
-        }
+        insertI18nLayer(payload);
         layerPatched = true;
     }
 
@@ -790,6 +798,76 @@ $pageExpression = @'
         : savedWrapper.data;
     const savedValue = findCachedI18nValue(savedPayload);
 
+    const staleCacheResults = [];
+    let staleCachesModified = 0;
+
+    if (patchAllExisting) {
+        for (const staleKey of staleCacheKeys) {
+            try {
+                const staleRaw = localStorage.getItem(staleKey);
+                if (staleRaw === null) {
+                    staleCacheResults.push({
+                        key: staleKey,
+                        status: "missing-during-update"
+                    });
+                    continue;
+                }
+
+                const staleWrapper = JSON.parse(staleRaw);
+                const staleDataWasString = typeof staleWrapper.data === "string";
+                const stalePayload = staleDataWasString
+                    ? JSON.parse(staleWrapper.data)
+                    : staleWrapper.data;
+                const beforeValue = findCachedI18nValue(stalePayload);
+                const wasTrue = beforeValue?.enable_i18n === true;
+
+                let stalePatched = patchExistingLayer(stalePayload);
+                let status = wasTrue ? "already-true" : "patched";
+
+                if (!stalePatched && !noBootstrap) {
+                    insertI18nLayer(stalePayload);
+                    stalePatched = true;
+                    status = "layer-inserted";
+                }
+
+                if (!stalePatched) {
+                    staleCacheResults.push({
+                        key: staleKey,
+                        status: "layer-missing-bootstrap-disabled"
+                    });
+                    continue;
+                }
+
+                if (!wasTrue || status === "layer-inserted") {
+                    staleWrapper.data = staleDataWasString
+                        ? JSON.stringify(stalePayload)
+                        : stalePayload;
+                    staleWrapper.receivedAt = Date.now();
+                    localStorage.setItem(staleKey, JSON.stringify(staleWrapper));
+                    staleCachesModified += 1;
+                }
+
+                const afterValue = findCachedI18nValue(stalePayload);
+                staleCacheResults.push({
+                    key: staleKey,
+                    status,
+                    cachedEnableI18n: afterValue?.enable_i18n ?? null
+                });
+            }
+            catch (error) {
+                staleCacheResults.push({
+                    key: staleKey,
+                    status: "error",
+                    error: String(error)
+                });
+            }
+        }
+    }
+
+    const finalCacheKeys = Object.keys(localStorage)
+        .filter(key => key.startsWith(cachePrefix))
+        .sort();
+
     return JSON.stringify({
         ok: Boolean(savedValue && savedValue.enable_i18n === true),
         mode: "write",
@@ -803,9 +881,12 @@ $pageExpression = @'
         liveEnableI18n,
         cachedEnableI18n: savedValue?.enable_i18n ?? null,
         cachedLocaleSource: savedValue?.locale_source ?? null,
-        allCacheKeys,
+        allCacheKeys: finalCacheKeys,
         staleCacheKeys,
-        staleCachesModified: false
+        patchAllExisting,
+        staleCachesModified: staleCachesModified > 0,
+        staleCacheModifiedCount: staleCachesModified,
+        staleCacheResults
     });
 })()
 '@
@@ -816,6 +897,9 @@ $effectiveExpression = $pageExpression.Replace(
 ).Replace(
     '__NO_BOOTSTRAP__',
     $(if ($NoBootstrap) { 'true' } else { 'false' })
+).Replace(
+    '__PATCH_ALL_EXISTING__',
+    $(if ($CurrentKeyOnly) { 'false' } else { 'true' })
 ).Replace(
     '__READY_TIMEOUT_MS__',
     [string]([Math]::Min(60000, $TimeoutSeconds * 1000))
@@ -857,7 +941,12 @@ if ($InspectOnly) {
 Write-Host ''
 Write-Host "Current client cache key: $($result.currentCacheKey)"
 Write-Host "Cached enable_i18n: $($result.cachedEnableI18n)"
-Write-Host "Stale cache keys left untouched: $(@($result.staleCacheKeys).Count)"
+if ($result.patchAllExisting) {
+    Write-Host "Existing cache keys patched: $($result.staleCacheModifiedCount)"
+}
+else {
+    Write-Host "Stale cache keys left untouched: $(@($result.staleCacheKeys).Count)"
+}
 
 if ($RestartAfterSuccess) {
     Write-Host "Reloading the Codex page to verify cache key persistence..."

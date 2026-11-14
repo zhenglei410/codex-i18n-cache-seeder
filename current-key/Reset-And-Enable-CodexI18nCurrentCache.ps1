@@ -10,7 +10,9 @@ param(
 
     [switch]$ValidateOnly,
 
-    [switch]$NoAutoRestart
+    [switch]$NoAutoRestart,
+
+    [switch]$CurrentKeyOnly
 )
 
 Set-StrictMode -Version Latest
@@ -114,6 +116,9 @@ try {
     }
     if (-not $NoAutoRestart) {
         $coreArguments.RestartAfterSuccess = $true
+    }
+    if ($CurrentKeyOnly) {
+        $coreArguments.CurrentKeyOnly = $true
     }
 
     & ([scriptblock]::Create($scriptText)) @coreArguments

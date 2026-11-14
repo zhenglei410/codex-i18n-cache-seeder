@@ -18,13 +18,14 @@ already true: 1
 
 但 Codex 当前 Client 实际查询的是另一个缓存键，因此中文仍然不会生效。
 
-本工具只使用当前 Client 计算出的键：
+本工具以当前 Client 计算出的键作为主键：
 
 ```javascript
 client.dataAdapter._getCacheKey(context.user)
 ```
 
-旧缓存键只作为诊断信息输出，绝不修改。
+默认同时遍历并修复所有已有 `statsig.cached.evaluations.*` 缓存键。这样既能
+兼容旧命令的“指定缓存写入”，也能保证当前 Client 实际使用的键被创建或修复。
 
 ## 推荐用法
 
@@ -57,6 +58,8 @@ currentCacheKeyExists
 liveEnableI18n
 allCacheKeys
 staleCacheKeys
+staleCachesModified
+staleCacheResults
 ```
 
 ## 写入时选择哪种数据
@@ -70,6 +73,13 @@ staleCacheKeys
 
 工具会先等待 Statsig Client 进入 `Ready`，再计算 `currentCacheKey`。避免在
 `Loading` 阶段使用过渡身份计算出一个之后会变化的缓存键。
+
+默认会同时写入：
+
+1. 当前 Client 精确缓存键；
+2. 所有已有的历史评估缓存键。
+
+使用 `-CurrentKeyOnly` 时只写当前键，旧键保持不变。
 
 成功条件只绑定当前键：
 
@@ -90,6 +100,7 @@ cachedEnableI18n = true
 | `-Port 9240` | 指定本地 CDP 端口 |
 | `-TimeoutSeconds 120` | 设置等待时间 |
 | `-NoAutoRestart` | 写入成功后不自动重启 Codex，供诊断时使用 |
+| `-CurrentKeyOnly` | 只写当前 Client 键，不修复历史缓存键 |
 
 ## 版本说明
 
