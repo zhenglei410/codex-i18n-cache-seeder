@@ -12,7 +12,12 @@ param(
 
     [switch]$NoAutoRestart,
 
-    [switch]$CurrentKeyOnly
+    [switch]$CurrentKeyOnly,
+
+    [switch]$DiagnoseAfterRestart,
+
+    [ValidateRange(0, 65535)]
+    [int]$DiagnosticPort = 0
 )
 
 Set-StrictMode -Version Latest
@@ -114,18 +119,26 @@ try {
         Port = $Port
         TimeoutSeconds = $TimeoutSeconds
     }
-    if (-not $NoAutoRestart) {
+    if (-not $NoAutoRestart -or $DiagnoseAfterRestart) {
         $coreArguments.RestartAfterSuccess = $true
     }
     if ($CurrentKeyOnly) {
         $coreArguments.CurrentKeyOnly = $true
+    }
+    if ($DiagnoseAfterRestart) {
+        $coreArguments.DiagnoseAfterRestart = $true
+        $coreArguments.DiagnosticPort = $DiagnosticPort
     }
 
     & ([scriptblock]::Create($scriptText)) @coreArguments
 
     Write-Host ''
     Write-Host '========================================' -ForegroundColor DarkGray
-    if ($NoAutoRestart) {
+    if ($DiagnoseAfterRestart) {
+        Write-Host '[成功] 中文缓存已写入，Codex 已用诊断端口重新启动。' -ForegroundColor Green
+        Write-Host '上方已输出最新启动状态，可用于判断缓存键是否变化及 enable_i18n 是否生效。' -ForegroundColor Green
+    }
+    elseif ($NoAutoRestart) {
         Write-Host '[成功] 当前缓存键的中文开关已经写入。' -ForegroundColor Green
         Write-Host '已跳过自动重启，请手动完全退出并重新打开 Codex。' -ForegroundColor Yellow
     }

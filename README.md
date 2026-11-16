@@ -38,6 +38,29 @@ irm https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/codex-zh.ps1 
 原因：...
 ```
 
+## 诊断仍显示英文
+
+如果正常命令显示缓存写入并持久化成功，但重新打开后仍是英文，可运行诊断命令：
+
+```powershell
+irm https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/codex-zh-diagnose.ps1 | iex
+```
+
+诊断命令会完整走一遍写入和持久化验证流程，然后停止首次启动的调试实例，
+使用另一个空闲端口重新启动 Codex，并输出最新启动状态：
+
+```text
+currentCacheKey
+currentCacheKeyExists
+liveEnableI18n
+allCacheKeys
+htmlLang
+statsigStatus
+```
+
+同时会显示最新缓存键是否与刚写入的缓存键一致。诊断启动的 Codex 会保持
+打开，便于直接核对界面。
+
 ## 解决什么问题
 
 Codex 桌面包已经包含简体中文资源，但界面是否启用由 Statsig Layer

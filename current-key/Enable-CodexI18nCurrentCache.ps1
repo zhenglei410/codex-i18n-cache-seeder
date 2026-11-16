@@ -14,7 +14,12 @@ param(
 
     [switch]$CurrentKeyOnly,
 
-    [switch]$RestartAfterSuccess
+    [switch]$RestartAfterSuccess,
+
+    [switch]$DiagnoseAfterRestart,
+
+    [ValidateRange(0, 65535)]
+    [int]$DiagnosticPort = 0
 )
 
 Set-StrictMode -Version Latest
@@ -61,7 +66,15 @@ function Test-CdpEndpoint {
 }
 
 function Find-FreePort {
+    param(
+        [int[]]$ExcludePort = @()
+    )
+
     foreach ($candidate in 9230..9270) {
+        if ($ExcludePort -contains $candidate) {
+            continue
+        }
+
         $listener = $null
         try {
             $listener = [System.Net.Sockets.TcpListener]::new(
@@ -539,6 +552,108 @@ function Confirm-CurrentCacheAfterReload {
     throw 'Cache persistence verification failed after page reload.'
 }
 
+function Get-CurrentCacheSnapshot {
+    param(
+        [int]$DebugPort,
+        [int]$TimeoutSeconds
+    )
+
+    $target = Wait-CdpTarget -DebugPort $DebugPort -WaitSeconds $TimeoutSeconds
+    $webSocketUrl = Get-WebSocketUrl -Target $target
+    $snapshotExpression = @'
+(async () => {
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const deadline = Date.now() + __READY_TIMEOUT_MS__;
+    const targetLayer = "72216192";
+    const cachePrefix = "statsig.cached.evaluations.";
+
+    const getRoot = () => window.__STATSIG__ || globalThis.__STATSIG__;
+    const getClient = () => {
+        const root = getRoot();
+        if (!root) return null;
+        return root.firstInstance ||
+            (typeof root.instance === "function" ? root.instance() : null);
+    };
+
+    let client = getClient();
+    while (
+        (!client || String(client.loadingStatus || "") !== "Ready") &&
+        Date.now() < deadline
+    ) {
+        await sleep(250);
+        client = getClient();
+    }
+
+    const htmlLang = String(document.documentElement.lang || "");
+    if (!client) {
+        return JSON.stringify({
+            ok: false,
+            error: "Statsig Client did not become available.",
+            currentCacheKey: null,
+            currentCacheKeyExists: false,
+            liveEnableI18n: null,
+            allCacheKeys: [],
+            htmlLang,
+            statsigStatus: null
+        });
+    }
+
+    const statsigStatus = String(client.loadingStatus || "");
+    if (statsigStatus !== "Ready") {
+        return JSON.stringify({
+            ok: false,
+            error: "Statsig Client did not reach Ready before the timeout.",
+            currentCacheKey: null,
+            currentCacheKeyExists: false,
+            liveEnableI18n: null,
+            allCacheKeys: [],
+            htmlLang,
+            statsigStatus
+        });
+    }
+
+    const context = client.getContext();
+    const currentCacheKey = String(
+        client.dataAdapter._getCacheKey(context.user)
+    );
+    const layer = client.getLayer(targetLayer, {
+        disableExposureLog: true
+    });
+    const allCacheKeys = Object.keys(localStorage)
+        .filter(key => key.startsWith(cachePrefix))
+        .sort();
+
+    return JSON.stringify({
+        ok: true,
+        currentCacheKey,
+        currentCacheKeyExists: localStorage.getItem(currentCacheKey) !== null,
+        liveEnableI18n: layer ? layer.get("enable_i18n", null) : null,
+        allCacheKeys,
+        htmlLang,
+        statsigStatus
+    });
+})()
+'@
+    $snapshotExpression = $snapshotExpression.Replace(
+        '__READY_TIMEOUT_MS__',
+        [string]([Math]::Min(60000, $TimeoutSeconds * 1000))
+    )
+
+    $rawSnapshot = Invoke-CdpExpression `
+        -WebSocketUrl $webSocketUrl `
+        -Expression $snapshotExpression `
+        -WaitSeconds $TimeoutSeconds
+    $cleanSnapshot = @($rawSnapshot) |
+        Where-Object { $_ -is [string] } |
+        Select-Object -Last 1
+
+    if ([string]::IsNullOrWhiteSpace($cleanSnapshot)) {
+        throw 'The restarted Codex page did not return a diagnostic snapshot.'
+    }
+
+    return $cleanSnapshot | ConvertFrom-Json
+}
+
 $pageExpression = @'
 (async () => {
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -948,7 +1063,7 @@ else {
     Write-Host "Stale cache keys left untouched: $(@($result.staleCacheKeys).Count)"
 }
 
-if ($RestartAfterSuccess) {
+if ($RestartAfterSuccess -or $DiagnoseAfterRestart) {
     Write-Host "Reloading the Codex page to verify cache key persistence..."
     $persistence = Confirm-CurrentCacheAfterReload `
         -DebugPort $debugPort `
@@ -956,10 +1071,63 @@ if ($RestartAfterSuccess) {
         -TimeoutSeconds $TimeoutSeconds
     Write-Host "Cache persistence verified: $($persistence.cachedEnableI18n)"
 
-    Write-Host 'Stopping the debugging instance and restarting Codex normally...'
-    Stop-CodexRuntimeProcesses
-    Start-CodexNormally
-    Write-Host 'Codex restarted normally with the current-key cache.'
+    if ($DiagnoseAfterRestart) {
+        if ($DiagnosticPort -gt 0) {
+            if ($DiagnosticPort -eq $debugPort) {
+                throw 'The diagnostic port must differ from the initial debugging port.'
+            }
+            $restartPort = $DiagnosticPort
+        }
+        else {
+            $restartPort = Find-FreePort -ExcludePort @($debugPort)
+        }
+
+        Write-Host (
+            "Stopping the initial debug instance and restarting Codex " +
+            "with diagnostic port $restartPort..."
+        )
+        Stop-CodexRuntimeProcesses
+        Start-CodexWithDebugPort -DebugPort $restartPort
+
+        $latest = Get-CurrentCacheSnapshot `
+            -DebugPort $restartPort `
+            -TimeoutSeconds $TimeoutSeconds
+
+        Write-Host ''
+        Write-Host '========== Latest Codex startup snapshot ==========' -ForegroundColor Cyan
+        [pscustomobject][ordered]@{
+            currentCacheKey       = $latest.currentCacheKey
+            currentCacheKeyExists = $latest.currentCacheKeyExists
+            liveEnableI18n        = $latest.liveEnableI18n
+            allCacheKeys          = @($latest.allCacheKeys)
+            htmlLang              = $latest.htmlLang
+            statsigStatus         = $latest.statsigStatus
+        } | Format-List
+        Write-Host "Diagnostic port: $restartPort"
+        Write-Host (
+            'Cache key matches seeded key: ' +
+            ($latest.currentCacheKey -eq $result.currentCacheKey)
+        )
+
+        if ($latest.ok -ne $true) {
+            $errorProperty = $latest.PSObject.Properties['error']
+            if ($null -ne $errorProperty -and -not [string]::IsNullOrWhiteSpace(
+                [string]$errorProperty.Value
+            )) {
+                throw [string]$errorProperty.Value
+            }
+            throw 'The restarted Codex page did not return a ready diagnostic snapshot.'
+        }
+
+        Write-Host 'The diagnostic Codex instance remains open for visual inspection.' `
+            -ForegroundColor Yellow
+    }
+    else {
+        Write-Host 'Stopping the debugging instance and restarting Codex normally...'
+        Stop-CodexRuntimeProcesses
+        Start-CodexNormally
+        Write-Host 'Codex restarted normally with the current-key cache.'
+    }
 }
 else {
     Write-Host 'Completely exit Codex, then start it normally to load the current-key cache.'
