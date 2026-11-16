@@ -1071,29 +1071,29 @@ if ($RestartAfterSuccess -or $DiagnoseAfterRestart) {
         -TimeoutSeconds $TimeoutSeconds
     Write-Host "Cache persistence verified: $($persistence.cachedEnableI18n)"
 
+    for ($check = 1; $check -le 2; $check++) {
+        Write-Host (
+            "Waiting 3 seconds before delayed cache read " +
+            "$check/2..."
+        )
+        Start-Sleep -Seconds 3
+
+        $beforeRestart = Get-CurrentCacheSnapshot `
+            -DebugPort $debugPort `
+            -TimeoutSeconds $TimeoutSeconds
+
+        Write-Host "Delayed cache read $check/2:" -ForegroundColor Cyan
+        [pscustomobject][ordered]@{
+            currentCacheKey       = $beforeRestart.currentCacheKey
+            currentCacheKeyExists = $beforeRestart.currentCacheKeyExists
+            liveEnableI18n        = $beforeRestart.liveEnableI18n
+            allCacheKeys          = @($beforeRestart.allCacheKeys)
+            htmlLang              = $beforeRestart.htmlLang
+            statsigStatus         = $beforeRestart.statsigStatus
+        } | Format-List
+    }
+
     if ($DiagnoseAfterRestart) {
-        for ($check = 1; $check -le 2; $check++) {
-            Write-Host (
-                "Waiting 3 seconds before delayed cache read " +
-                "$check/2..."
-            )
-            Start-Sleep -Seconds 3
-
-            $beforeRestart = Get-CurrentCacheSnapshot `
-                -DebugPort $debugPort `
-                -TimeoutSeconds $TimeoutSeconds
-
-            Write-Host "Delayed cache read $check/2:" -ForegroundColor Cyan
-            [pscustomobject][ordered]@{
-                currentCacheKey       = $beforeRestart.currentCacheKey
-                currentCacheKeyExists = $beforeRestart.currentCacheKeyExists
-                liveEnableI18n        = $beforeRestart.liveEnableI18n
-                allCacheKeys          = @($beforeRestart.allCacheKeys)
-                htmlLang              = $beforeRestart.htmlLang
-                statsigStatus         = $beforeRestart.statsigStatus
-            } | Format-List
-        }
-
         if ($DiagnosticPort -gt 0) {
             if ($DiagnosticPort -eq $debugPort) {
                 throw 'The diagnostic port must differ from the initial debugging port.'
