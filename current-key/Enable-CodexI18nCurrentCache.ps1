@@ -1072,6 +1072,28 @@ if ($RestartAfterSuccess -or $DiagnoseAfterRestart) {
     Write-Host "Cache persistence verified: $($persistence.cachedEnableI18n)"
 
     if ($DiagnoseAfterRestart) {
+        for ($check = 1; $check -le 2; $check++) {
+            Write-Host (
+                "Waiting 3 seconds before delayed cache read " +
+                "$check/2..."
+            )
+            Start-Sleep -Seconds 3
+
+            $beforeRestart = Get-CurrentCacheSnapshot `
+                -DebugPort $debugPort `
+                -TimeoutSeconds $TimeoutSeconds
+
+            Write-Host "Delayed cache read $check/2:" -ForegroundColor Cyan
+            [pscustomobject][ordered]@{
+                currentCacheKey       = $beforeRestart.currentCacheKey
+                currentCacheKeyExists = $beforeRestart.currentCacheKeyExists
+                liveEnableI18n        = $beforeRestart.liveEnableI18n
+                allCacheKeys          = @($beforeRestart.allCacheKeys)
+                htmlLang              = $beforeRestart.htmlLang
+                statsigStatus         = $beforeRestart.statsigStatus
+            } | Format-List
+        }
+
         if ($DiagnosticPort -gt 0) {
             if ($DiagnosticPort -eq $debugPort) {
                 throw 'The diagnostic port must differ from the initial debugging port.'
@@ -1117,6 +1139,20 @@ if ($RestartAfterSuccess -or $DiagnoseAfterRestart) {
                 throw [string]$errorProperty.Value
             }
             throw 'The restarted Codex page did not return a ready diagnostic snapshot.'
+        }
+
+        if (
+            $latest.currentCacheKeyExists -ne $true -or
+            $latest.liveEnableI18n -ne $true
+        ) {
+            Write-Host (
+                'The diagnostic Codex instance remains open for inspection.'
+            ) -ForegroundColor Yellow
+            throw (
+                'The restarted Codex instance did not load the seeded i18n cache. ' +
+                "currentCacheKeyExists=$($latest.currentCacheKeyExists); " +
+                "liveEnableI18n=$($latest.liveEnableI18n)"
+            )
         }
 
         Write-Host 'The diagnostic Codex instance remains open for visual inspection.' `

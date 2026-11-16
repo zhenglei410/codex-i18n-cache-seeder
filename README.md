@@ -46,8 +46,9 @@ irm https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/codex-zh.ps1 
 irm https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/codex-zh-diagnose.ps1 | iex
 ```
 
-诊断命令会完整走一遍写入和持久化验证流程，然后停止首次启动的调试实例，
-使用另一个空闲端口重新启动 Codex，并输出最新启动状态：
+诊断命令会完整走一遍写入和持久化验证流程，每隔 3 秒读取一次缓存状态，
+连续读取两次后再停止首次启动的调试实例，使用另一个空闲端口重新启动
+Codex，并输出最新启动状态：
 
 ```text
 currentCacheKey
