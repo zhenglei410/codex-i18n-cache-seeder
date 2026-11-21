@@ -222,78 +222,6 @@ function Get-CodexRuntimeProcesses {
         Where-Object { $_.Name -match $pattern }
 }
 
-function Request-CodexGracefulClose {
-    param(
-        [int]$DebugPort,
-        [int]$WaitSeconds = 10
-    )
-
-    try {
-        $version = Invoke-RestMethod `
-            -Uri "http://127.0.0.1:$DebugPort/json/version" `
-            -TimeoutSec 5
-    }
-    catch {
-        throw (
-            'Could not read the Codex browser debugging endpoint. ' +
-            'Close Codex manually, wait for all processes to exit, then reopen it.'
-        )
-    }
-
-    $webSocketUrl = Get-WebSocketUrl -Target $version
-    $socket = [System.Net.WebSockets.ClientWebSocket]::new()
-    $socket.Options.Proxy = $null
-    $timeout = [System.Threading.CancellationTokenSource]::new(
-        [TimeSpan]::FromSeconds([Math]::Min($WaitSeconds, 10))
-    )
-
-    try {
-        [void]$socket.ConnectAsync(
-            [Uri]$webSocketUrl,
-            $timeout.Token
-        ).GetAwaiter().GetResult()
-
-        $payload = @{
-            id = 1
-            method = 'Browser.close'
-        } | ConvertTo-Json -Compress
-        $bytes = [Text.Encoding]::UTF8.GetBytes($payload)
-
-        try {
-            [void]$socket.SendAsync(
-                [ArraySegment[byte]]::new($bytes),
-                [System.Net.WebSockets.WebSocketMessageType]::Text,
-                $true,
-                [Threading.CancellationToken]::None
-            ).GetAwaiter().GetResult()
-        }
-        catch {
-            # Browser.close can close the socket before SendAsync completes.
-        }
-    }
-    finally {
-        $timeout.Dispose()
-        $socket.Dispose()
-    }
-}
-
-function Request-CodexMainWindowClose {
-    $sent = 0
-    foreach ($process in @(Get-CodexMainProcesses)) {
-        $nativeProcess = Get-Process `
-            -Id $process.ProcessId `
-            -ErrorAction SilentlyContinue
-        if (
-            $null -ne $nativeProcess -and
-            $nativeProcess.MainWindowHandle -ne 0 -and
-            $nativeProcess.CloseMainWindow()
-        ) {
-            $sent += 1
-        }
-    }
-    return ($sent -gt 0)
-}
-
 function Wait-CodexRuntimeExit {
     param(
         [int]$WaitSeconds = 30
@@ -1194,35 +1122,25 @@ if ($RestartAfterSuccess -or $DiagnoseAfterRestart -or $GracefulRestart) {
     }
 
     if ($GracefulRestart) {
-        Write-Host 'Requesting a graceful Codex shutdown with CDP Browser.close...'
-        Request-CodexGracefulClose `
-            -DebugPort $debugPort `
-            -WaitSeconds 10
+        Write-Host ''
+        Write-Host (
+            'Please fully exit Codex now from its window or tray menu. ' +
+            'The command is waiting and will reopen it after all processes stop.'
+        ) -ForegroundColor Yellow
+        Write-Host 'Do not force-kill Codex while the command is waiting.' `
+            -ForegroundColor Yellow
 
-        Write-Host 'Waiting for all Codex processes to exit naturally...'
-        if (-not (Wait-CodexRuntimeExit -WaitSeconds 15)) {
-            Write-Warning (
-                'Browser.close did not finish the shutdown. ' +
-                'Requesting a standard main-window close...'
+        if (-not (Wait-CodexRuntimeExit -WaitSeconds 600)) {
+            throw (
+                'Codex did not fully exit within 10 minutes. ' +
+                'Close it manually from its window or tray menu, then run the command again.'
             )
-            if (-not (Request-CodexMainWindowClose)) {
-                throw (
-                    'Codex did not expose a main window after Browser.close. ' +
-                    'Close it manually from its tray menu, then reopen it.'
-                )
-            }
-            if (-not (Wait-CodexRuntimeExit -WaitSeconds 20)) {
-                throw (
-                    'Codex did not exit after the standard window close. ' +
-                    'Close it manually from its tray menu, then reopen it.'
-                )
-            }
         }
 
-        Write-Host 'Codex exited cleanly. Waiting for storage to settle...'
+        Write-Host 'Codex was closed by the user. Waiting for storage to settle...'
         Start-Sleep -Seconds 2
         Start-CodexNormally
-        Write-Host 'Codex restarted normally after a graceful shutdown.'
+        Write-Host 'Codex restarted normally after the user shutdown.'
     }
     elseif ($DiagnoseAfterRestart) {
         if ($DiagnosticPort -gt 0) {

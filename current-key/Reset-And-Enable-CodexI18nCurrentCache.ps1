@@ -140,7 +140,7 @@ try {
     Write-Host ''
     Write-Host '========================================' -ForegroundColor DarkGray
     if ($GracefulRestart) {
-        Write-Host '[成功] 中文缓存已写入，Codex 已优雅关闭并重新正常启动。' -ForegroundColor Green
+        Write-Host '[成功] 中文缓存已写入，Codex 已由用户关闭并重新正常启动。' -ForegroundColor Green
         Write-Host '请检查界面是否显示中文。' -ForegroundColor Green
     }
     elseif ($DiagnoseAfterRestart) {
