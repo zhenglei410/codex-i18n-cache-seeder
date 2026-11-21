@@ -16,6 +16,8 @@ param(
 
     [switch]$DiagnoseAfterRestart,
 
+    [switch]$GracefulRestart,
+
     [ValidateRange(0, 65535)]
     [int]$DiagnosticPort = 0
 )
@@ -119,7 +121,7 @@ try {
         Port = $Port
         TimeoutSeconds = $TimeoutSeconds
     }
-    if (-not $NoAutoRestart -or $DiagnoseAfterRestart) {
+    if (-not $NoAutoRestart -or $DiagnoseAfterRestart -or $GracefulRestart) {
         $coreArguments.RestartAfterSuccess = $true
     }
     if ($CurrentKeyOnly) {
@@ -129,12 +131,19 @@ try {
         $coreArguments.DiagnoseAfterRestart = $true
         $coreArguments.DiagnosticPort = $DiagnosticPort
     }
+    if ($GracefulRestart) {
+        $coreArguments.GracefulRestart = $true
+    }
 
     & ([scriptblock]::Create($scriptText)) @coreArguments
 
     Write-Host ''
     Write-Host '========================================' -ForegroundColor DarkGray
-    if ($DiagnoseAfterRestart) {
+    if ($GracefulRestart) {
+        Write-Host '[成功] 中文缓存已写入，Codex 已优雅关闭并重新正常启动。' -ForegroundColor Green
+        Write-Host '请检查界面是否显示中文。' -ForegroundColor Green
+    }
+    elseif ($DiagnoseAfterRestart) {
         Write-Host '[成功] 中文缓存已写入，Codex 已用诊断端口重新启动。' -ForegroundColor Green
         Write-Host '上方已输出最新启动状态，可用于判断缓存键是否变化及 enable_i18n 是否生效。' -ForegroundColor Green
     }

@@ -18,6 +18,8 @@ param(
 
     [switch]$DiagnoseAfterRestart,
 
+    [switch]$GracefulRestart,
+
     [ValidateRange(0, 65535)]
     [int]$DiagnosticPort = 0
 )
@@ -214,12 +216,113 @@ function Start-CodexWithDebugPort {
     Write-Host "Started Codex with debugging port $DebugPort."
 }
 
-function Stop-CodexRuntimeProcesses {
+function Get-CodexRuntimeProcesses {
     $pattern = '^(ChatGPT|Codex|codex-command-runner|codex-windows-sandbox-service|codex-code-mode-host)(\.exe)?$'
-    $targets = @(
-        Get-CimInstance Win32_Process |
-            Where-Object { $_.Name -match $pattern }
+    Get-CimInstance Win32_Process |
+        Where-Object { $_.Name -match $pattern }
+}
+
+function Request-CodexGracefulClose {
+    param(
+        [int]$DebugPort,
+        [int]$WaitSeconds = 10
     )
+
+    try {
+        $version = Invoke-RestMethod `
+            -Uri "http://127.0.0.1:$DebugPort/json/version" `
+            -TimeoutSec 5
+    }
+    catch {
+        throw (
+            'Could not read the Codex browser debugging endpoint. ' +
+            'Close Codex manually, wait for all processes to exit, then reopen it.'
+        )
+    }
+
+    $webSocketUrl = Get-WebSocketUrl -Target $version
+    $socket = [System.Net.WebSockets.ClientWebSocket]::new()
+    $socket.Options.Proxy = $null
+    $timeout = [System.Threading.CancellationTokenSource]::new(
+        [TimeSpan]::FromSeconds([Math]::Min($WaitSeconds, 10))
+    )
+
+    try {
+        [void]$socket.ConnectAsync(
+            [Uri]$webSocketUrl,
+            $timeout.Token
+        ).GetAwaiter().GetResult()
+
+        $payload = @{
+            id = 1
+            method = 'Browser.close'
+        } | ConvertTo-Json -Compress
+        $bytes = [Text.Encoding]::UTF8.GetBytes($payload)
+
+        try {
+            [void]$socket.SendAsync(
+                [ArraySegment[byte]]::new($bytes),
+                [System.Net.WebSockets.WebSocketMessageType]::Text,
+                $true,
+                [Threading.CancellationToken]::None
+            ).GetAwaiter().GetResult()
+        }
+        catch {
+            # Browser.close can close the socket before SendAsync completes.
+        }
+    }
+    finally {
+        $timeout.Dispose()
+        $socket.Dispose()
+    }
+}
+
+function Request-CodexMainWindowClose {
+    $sent = 0
+    foreach ($process in @(Get-CodexMainProcesses)) {
+        $nativeProcess = Get-Process `
+            -Id $process.ProcessId `
+            -ErrorAction SilentlyContinue
+        if (
+            $null -ne $nativeProcess -and
+            $nativeProcess.MainWindowHandle -ne 0 -and
+            $nativeProcess.CloseMainWindow()
+        ) {
+            $sent += 1
+        }
+    }
+    return ($sent -gt 0)
+}
+
+function Wait-CodexRuntimeExit {
+    param(
+        [int]$WaitSeconds = 30
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($WaitSeconds)
+    do {
+        $remaining = @(Get-CodexRuntimeProcesses)
+        if ($remaining.Count -eq 0) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    while ([DateTime]::UtcNow -lt $deadline)
+
+    $remaining = @(Get-CodexRuntimeProcesses)
+    if ($remaining.Count -gt 0) {
+        foreach ($process in $remaining) {
+            Write-Warning (
+                "Codex process is still running: PID=$($process.ProcessId), " +
+                "Name=$($process.Name)"
+            )
+        }
+    }
+    return ($remaining.Count -eq 0)
+}
+
+function Stop-CodexRuntimeProcesses {
+    $targets = @(Get-CodexRuntimeProcesses)
 
     foreach ($process in $targets) {
         if ($null -ne (Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue)) {
@@ -235,10 +338,7 @@ function Stop-CodexRuntimeProcesses {
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     do {
         Start-Sleep -Milliseconds 250
-        $remaining = @(
-            Get-CimInstance Win32_Process |
-                Where-Object { $_.Name -match $pattern }
-        )
+        $remaining = @(Get-CodexRuntimeProcesses)
     }
     while ($remaining.Count -gt 0 -and [DateTime]::UtcNow -lt $deadline)
 
@@ -1063,7 +1163,7 @@ else {
     Write-Host "Stale cache keys left untouched: $(@($result.staleCacheKeys).Count)"
 }
 
-if ($RestartAfterSuccess -or $DiagnoseAfterRestart) {
+if ($RestartAfterSuccess -or $DiagnoseAfterRestart -or $GracefulRestart) {
     Write-Host "Reloading the Codex page to verify cache key persistence..."
     $persistence = Confirm-CurrentCacheAfterReload `
         -DebugPort $debugPort `
@@ -1093,7 +1193,38 @@ if ($RestartAfterSuccess -or $DiagnoseAfterRestart) {
         } | Format-List
     }
 
-    if ($DiagnoseAfterRestart) {
+    if ($GracefulRestart) {
+        Write-Host 'Requesting a graceful Codex shutdown with CDP Browser.close...'
+        Request-CodexGracefulClose `
+            -DebugPort $debugPort `
+            -WaitSeconds 10
+
+        Write-Host 'Waiting for all Codex processes to exit naturally...'
+        if (-not (Wait-CodexRuntimeExit -WaitSeconds 15)) {
+            Write-Warning (
+                'Browser.close did not finish the shutdown. ' +
+                'Requesting a standard main-window close...'
+            )
+            if (-not (Request-CodexMainWindowClose)) {
+                throw (
+                    'Codex did not expose a main window after Browser.close. ' +
+                    'Close it manually from its tray menu, then reopen it.'
+                )
+            }
+            if (-not (Wait-CodexRuntimeExit -WaitSeconds 20)) {
+                throw (
+                    'Codex did not exit after the standard window close. ' +
+                    'Close it manually from its tray menu, then reopen it.'
+                )
+            }
+        }
+
+        Write-Host 'Codex exited cleanly. Waiting for storage to settle...'
+        Start-Sleep -Seconds 2
+        Start-CodexNormally
+        Write-Host 'Codex restarted normally after a graceful shutdown.'
+    }
+    elseif ($DiagnoseAfterRestart) {
         if ($DiagnosticPort -gt 0) {
             if ($DiagnosticPort -eq $debugPort) {
                 throw 'The diagnostic port must differ from the initial debugging port.'
