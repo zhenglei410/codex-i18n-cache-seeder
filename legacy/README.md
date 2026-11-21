@@ -4,6 +4,7 @@
 
 - [`legacy/Enable-CodexI18nCache.ps1`](Enable-CodexI18nCache.ps1)
 - [`legacy/Reset-And-Enable-CodexI18n.ps1`](Reset-And-Enable-CodexI18n.ps1)
+- [`legacy/codex-zh.ps1`](codex-zh.ps1)：切换到优雅关闭前的主命令备份
 
 根目录的同名文件现在是兼容转发层，继续接受旧参数，但实际运行新的
 `current-key` 工具。

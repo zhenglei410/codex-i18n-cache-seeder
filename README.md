@@ -22,13 +22,14 @@ Codex。
 irm https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/codex-zh.ps1 | iex
 ```
 
-命令会关闭当前 Codex，写入中文缓存，完成页面重载验证，再每隔 3 秒读取
-一次缓存状态，连续读取两次后自动重新打开 Codex。
+命令会写入中文缓存，完成页面重载验证，再每隔 3 秒读取一次缓存状态，
+连续读取两次后通过 CDP `Browser.close` 优雅关闭 Codex，等待进程退出并
+重新打开。
 
 成功时显示：
 
 ```text
-[成功] 中文缓存已经写入，Codex 已重新正常启动。
+[成功] 中文缓存已写入，Codex 已优雅关闭并重新正常启动。
 请检查界面是否显示中文。
 ```
 
@@ -63,16 +64,15 @@ statsigStatus
 同时会显示最新缓存键是否与刚写入的缓存键一致。诊断启动的 Codex 会保持
 打开，便于直接核对界面。
 
-## 测试优雅关闭
+## 优雅关闭入口
 
-该命令用于验证 CDP `Browser.close` 能否让 Chromium/LevelDB 正常落盘。
-它不会改动主命令：
+主命令已经使用该入口。需要直接调用同一个优雅关闭流程时，可以运行：
 
 ```powershell
 irm https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/codex-zh-graceful.ps1 | iex
 ```
 
-流程与主命令相同，但两次延时读取完成后不再强制结束进程，而是：
+流程与主命令相同：
 
 1. 通过 `Browser.close` 请求 Codex 优雅关闭；
 2. 如果进程尚未退出，再发送标准主窗口关闭消息；
@@ -82,6 +82,9 @@ irm https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/codex-zh-grac
 
 如果 `Browser.close` 后进程没有全部退出，命令会显示失败并要求手动关闭，
 不会强制结束进程后继续重启。
+
+切换到优雅关闭前的主命令原样备份在
+[`legacy/codex-zh.ps1`](legacy/codex-zh.ps1)。
 
 ## 解决什么问题
 
