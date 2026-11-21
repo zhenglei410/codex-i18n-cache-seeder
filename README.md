@@ -63,24 +63,25 @@ statsigStatus
 同时会显示最新缓存键是否与刚写入的缓存键一致。诊断启动的 Codex 会保持
 打开，便于直接核对界面。
 
-## 测试用户关闭后重启
+## 测试优雅关闭
 
-该命令用于验证用户正常关闭 Codex 后能否让 Chromium/LevelDB 完成落盘。
+该命令用于验证 CDP `Browser.close` 能否让 Chromium/LevelDB 正常落盘。
 它不会改动主命令：
 
 ```powershell
 irm https://gitee.com/zhenglei410/codex-i18n-cache-seeder/raw/main/codex-zh-graceful.ps1 | iex
 ```
 
-流程与主命令相同，但两次延时读取完成后不再自动关闭进程，而是：
+流程与主命令相同，但两次延时读取完成后不再强制结束进程，而是：
 
-1. 提示用户从窗口或托盘菜单完全退出 Codex；
-2. 等待全部 Codex 进程自然退出，最长等待 10 分钟；
-3. 等待 2 秒，让 LevelDB 完成落盘；
-4. 正常重新启动 Codex。
+1. 通过 `Browser.close` 请求 Codex 优雅关闭；
+2. 如果进程尚未退出，再发送标准主窗口关闭消息；
+3. 等待全部 Codex 进程自然退出；
+4. 等待 2 秒，让 LevelDB 完成落盘；
+5. 正常重新启动 Codex。
 
-等待期间不要使用任务管理器或 `Stop-Process -Force` 强制结束 Codex。
-如果 10 分钟内没有完全退出，命令会显示失败。
+如果 `Browser.close` 后进程没有全部退出，命令会显示失败并要求手动关闭，
+不会强制结束进程后继续重启。
 
 ## 解决什么问题
 
